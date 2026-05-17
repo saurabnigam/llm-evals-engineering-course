@@ -1037,7 +1037,112 @@ balanced_sample = sampler.sample(all_samples, n=1000, strategy='balanced')
 
 ---
 
-## 3.5 Exercises
+## 3.5 Worked Examples (2026)
+
+Three pipeline patterns you can drop into a real project today.
+
+#### Example 1 — Hosted offline-eval pipeline with Braintrust
+
+Braintrust packages dataset → task → scorers → experiment view in one API. Good fit when you want a hosted UI without building it yourself.
+
+```python
+# pip install braintrust autoevals openai
+from braintrust import Eval
+from autoevals import Factuality, AnswerRelevancy
+from openai import OpenAI
+
+client = OpenAI()
+
+def task(input: str) -> str:
+    r = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": input}],
+        temperature=0,
+    )
+    return r.choices[0].message.content
+
+Eval(
+    "support-bot-v3",            # project name in Braintrust
+    data=lambda: [
+        {"input": "How do I reset my password?",
+         "expected": "Click 'Forgot password' on the login page."},
+        {"input": "What are your hours?",
+         "expected": "We are open 9am–9pm ET, 7 days a week."},
+    ],
+    task=task,
+    scores=[Factuality, AnswerRelevancy],
+)
+# Run: `braintrust eval pipeline.py` — produces a diffable experiment view in the web UI.
+```
+
+#### Example 2 — Inspect AI task graph for a multi-evaluator pipeline
+
+```python
+# Inspect lets you compose Solvers + Scorers — each Sample flows through them.
+from inspect_ai import Task, task, eval as run_eval
+from inspect_ai.dataset import json_dataset
+from inspect_ai.solver import generate, system_message
+from inspect_ai.scorer import (
+    model_graded_qa, includes, match, mean, stderr,
+)
+
+@task
+def faq_pipeline():
+    return Task(
+        dataset=json_dataset("data/faq.jsonl"),     # {input, target} per line
+        solver=[system_message("Answer concisely."), generate()],
+        scorer=[
+            includes(),                              # cheap rule-based first
+            match("answer", ignore_case=True),       # exact-match
+            model_graded_qa(model="openai/gpt-4o"),  # LLM-judge fallback
+        ],
+        metrics=[mean(), stderr()],
+    )
+
+# Run 5 epochs to get standard error bands for non-deterministic outputs:
+# inspect eval pipeline.py --epochs 5 --model anthropic/claude-sonnet-4-5
+```
+
+#### Example 3 — OpenTelemetry-traced evaluator (vendor-neutral)
+
+Emit GenAI-conventions traces so the same evaluator works against Phoenix, Langfuse, LangSmith, or Braintrust by swapping the OTel exporter — no code changes.
+
+```python
+# pip install opentelemetry-api opentelemetry-sdk openinference-instrumentation-openai
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from openinference.instrumentation.openai import OpenAIInstrumentor
+from openai import OpenAI
+
+trace.set_tracer_provider(TracerProvider())
+trace.get_tracer_provider().add_span_processor(
+    BatchSpanProcessor(OTLPSpanExporter())   # OTEL_EXPORTER_OTLP_ENDPOINT picks the backend
+)
+OpenAIInstrumentor().instrument()            # auto-traces every OpenAI call w/ GenAI semconv
+tracer = trace.get_tracer("evals")
+
+client = OpenAI()
+
+def evaluate_one(sample):
+    with tracer.start_as_current_span("eval.sample") as span:
+        span.set_attribute("eval.sample_id", sample["id"])
+        span.set_attribute("eval.suite", "faq-v3")
+        out = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": sample["input"]}],
+        ).choices[0].message.content
+        score = float(sample["expected"].lower() in out.lower())
+        span.set_attribute("eval.score", score)
+        return score
+```
+
+The three examples above cover the **three deployment shapes** you will actually encounter: hosted SaaS (Braintrust), self-hosted research-grade (Inspect AI), and vendor-neutral OSS observability (OpenTelemetry). Pick one for offline + CI; pair with an online tracing backend for production (see module 06).
+
+---
+
+## 3.6 Exercises
 
 ### Exercise 1: Build a Complete Pipeline
 Implement a batch evaluation pipeline with:

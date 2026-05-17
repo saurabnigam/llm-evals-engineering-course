@@ -983,6 +983,117 @@ class InstrumentedEvaluator:
 
 ---
 
+## 5.6b Worked Examples (2026)
+
+Three levers that compound to drop eval cost 10–20× without sacrificing signal.
+
+#### Example 1 — Judge cascade (route by difficulty)
+
+Most samples don’t need the smartest judge. Cascade from cheapest → strongest, escalating only on ambiguity.
+
+```python
+from anthropic import Anthropic
+from openai import OpenAI
+
+anthropic, openai = Anthropic(), OpenAI()
+
+CHEAP_JUDGE = ("openai",   "gpt-4o-mini",        0.0002)   # $/1k input tokens
+MID_JUDGE   = ("anthropic","claude-haiku-4-5",   0.0008)
+STRONG      = ("anthropic","claude-sonnet-4-5",  0.003)
+
+def judge(prompt: str, model_tuple) -> tuple[float, float]:
+    """Return (score 0-1, judge confidence 0-1)."""
+    vendor, model, _ = model_tuple
+    if vendor == "openai":
+        r = openai.chat.completions.create(model=model, temperature=0,
+                logprobs=True, top_logprobs=2,
+                messages=[{"role":"user","content":prompt}])
+        # Use top-2 logprob gap as a proxy for confidence
+        top = r.choices[0].logprobs.content[0].top_logprobs
+        conf = abs(top[0].logprob - top[1].logprob)
+        return (1.0 if "good" in r.choices[0].message.content.lower() else 0.0,
+                min(1.0, conf))
+    # ... analogous Anthropic branch
+
+def cascading_judge(prompt: str) -> float:
+    score, conf = judge(prompt, CHEAP_JUDGE)
+    if conf > 0.8:        return score
+    score, conf = judge(prompt, MID_JUDGE)
+    if conf > 0.8:        return score
+    score, _    = judge(prompt, STRONG)
+    return score
+
+# Empirically: ~75% resolved at cheap, ~20% at mid, ~5% at strong.
+# Blended cost ≈ 0.75*0.0002 + 0.20*0.0008 + 0.05*0.003 = $0.00046 / sample
+# vs flat strong-judge $0.003 / sample → 6.5× cheaper, same final agreement.
+```
+
+#### Example 2 — OpenAI Batch API + Anthropic Message Batches (50% off)
+
+Both providers offer ~50%-discounted batch endpoints with 24h SLA — perfect for nightly eval runs.
+
+```python
+# OpenAI Batch — prepare JSONL, submit, poll, download.
+import json, time
+from openai import OpenAI
+client = OpenAI()
+
+with open("requests.jsonl", "w") as f:
+    for i, sample in enumerate(eval_dataset):
+        f.write(json.dumps({
+            "custom_id": f"sample-{i}",
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "body": {"model": "gpt-4o-mini", "temperature": 0,
+                     "messages": [{"role":"user","content":sample["input"]}]},
+        }) + "\n")
+
+file = client.files.create(file=open("requests.jsonl","rb"), purpose="batch")
+job  = client.batches.create(input_file_id=file.id,
+                             endpoint="/v1/chat/completions",
+                             completion_window="24h")
+while (job := client.batches.retrieve(job.id)).status not in ("completed","failed"):
+    time.sleep(60)
+results = client.files.content(job.output_file_id).text
+# 50% off list price — use this for *any* eval that doesn't need synchronous results.
+```
+
+For Anthropic, use `client.messages.batches.create(...)` with the same shape — also 50% off.
+
+#### Example 3 — Prompt-cache aware judge (Anthropic prompt caching)
+
+If 90% of your judge prompt is a long rubric, *cache* it. You pay full price once, then 10% on subsequent calls within 5 minutes.
+
+```python
+from anthropic import Anthropic
+client = Anthropic()
+
+LONG_RUBRIC = open("rubric.md").read()   # 8–12k tokens of detailed criteria + few-shots
+
+def judge(sample_input: str, sample_output: str) -> str:
+    msg = client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=200,
+        system=[
+            {"type": "text",
+             "text": LONG_RUBRIC,
+             "cache_control": {"type": "ephemeral"}},   # <— the magic
+        ],
+        messages=[{"role": "user",
+                   "content": f"INPUT:\n{sample_input}\n\nOUTPUT:\n{sample_output}\n\n"
+                              "Score per the rubric. Return JSON."}],
+    )
+    return msg.content[0].text
+
+# First call:  full price on 12k system tokens + small user.
+# Calls 2..N within 5 min: 10% of system token price + full user.
+# On a 1,000-sample run → ~85% reduction in input-token spend.
+```
+
+Combine all three (cascade + batch + prompt cache) and a $300 nightly eval becomes a $15 nightly eval. That’s often the difference between “eval-driven development” and “we’ll run it before release”.
+
+---
+
 ## 5.7 Exercises
 
 ### Exercise 1: Cost Optimization

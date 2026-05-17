@@ -1232,6 +1232,134 @@ class FeedbackAnalytics:
 
 ---
 
+## 6.6b Online Evals on Production Traces (2026 standard)
+
+Offline evals on a fixed dataset will always lag what real users are sending you. The mature pattern is to run a *subset* of your evaluators **on live production traces** and treat the result as a continuous quality signal. This is what tools like [Braintrust online scoring](https://www.braintrust.dev/docs/guides/evals/online), [LangSmith online evaluators](https://docs.langchain.com/langsmith/online-evaluations), [Arize Phoenix](https://phoenix.arize.com/) and [Langfuse](https://langfuse.com/) all standardize on.
+
+**What to score online:**
+
+| Score | Frequency | Why |
+|-------|-----------|-----|
+| Cheap rule-based checks (schema, length, refusal regex) | 100% of traffic | Free, catches obvious breakage |
+| LLM-judge faithfulness / groundedness (RAG) | 5–20% sample | Catches hallucination drift |
+| LLM-judge tone / policy adherence | 5–20% sample | Catches voice/policy regressions |
+| Tool-call correctness (agents) | 100% if cheap, else sample | Catches tool-schema drift |
+| User-signal scores (👍/👎, dwell, edit, reopen) | 100% | Ground truth, eventually |
+
+**The trace → dataset flywheel:**
+
+```
+Production trace
+     │
+     ├── Online judge scores it (e.g. faithfulness=0.4, low confidence)
+     │
+     ├── Filter: low score OR low judge-confidence OR user 👎
+     │
+     ├── Add to "review queue"
+     │
+     ├── Human labels it (correct answer + critique)
+     │
+     └── Promote to permanent eval dataset (versioned)
+               │
+               └── Next CI run catches this exact regression
+```
+
+**Implementation notes:**
+- Run online judges **asynchronously** off the request path. They must never add latency to the user's response.
+- Sample, don't score everything. 5–20% is plenty for trend detection; 100% is wasted spend.
+- Track judge **confidence** alongside the score. Low-confidence scores are the highest-value items to send to humans.
+- Always emit traces with [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) so you can swap eval/observability backends without re-instrumenting.
+- Watch for **drift signals**: rolling mean of judge scores, distribution shift in input length / language / topic, rate of refusals, rate of tool errors.
+
+### 6.6c Worked Examples (2026)
+
+Three compact patterns that operationalize online evals + the trace→dataset flywheel.
+
+#### Example 1 — Async online judge with sampling
+
+Never block the user response. Fire-and-forget the judge call.
+
+```python
+import asyncio, random, json, time
+from anthropic import AsyncAnthropic
+client = AsyncAnthropic()
+
+SAMPLE_RATE = 0.10  # 10% of traffic
+
+async def online_judge(trace_id: str, user: str, output: str):
+    """Background coroutine — awaits nothing on the request path."""
+    if random.random() > SAMPLE_RATE:
+        return
+    msg = await client.messages.create(
+        model="claude-haiku-4-5", max_tokens=120, temperature=0,
+        messages=[{"role": "user", "content":
+            f"Score 0-1 if the answer is grounded in policy.\nQ: {user}\nA: {output}\n"
+            'Return JSON: {"score": float, "confidence": float, "reason": str}'}],
+    )
+    payload = json.loads(msg.content[0].text)
+    await write_to_warehouse(trace_id, payload, ts=time.time())
+
+# In your request handler:
+async def handle(request):
+    out = await llm_call(request.user_msg)
+    asyncio.create_task(online_judge(request.id, request.user_msg, out))  # fire & forget
+    return out
+```
+
+#### Example 2 — Drift-detection SQL on judge scores
+
+Run this nightly against your trace warehouse. Alert if today’s mean drops >2σ vs the trailing 14-day baseline.
+
+```sql
+-- BigQuery / Snowflake / DuckDB compatible
+WITH daily AS (
+  SELECT DATE(ts) AS d,
+         AVG(score)             AS mean_score,
+         APPROX_QUANTILES(score, 100)[OFFSET(50)] AS p50,
+         COUNT(*)               AS n
+  FROM   prod_judge_scores
+  WHERE  ts >= CURRENT_DATE - INTERVAL '15' DAY
+  GROUP BY d
+),
+baseline AS (
+  SELECT AVG(mean_score) AS mu,
+         STDDEV(mean_score) AS sigma
+  FROM   daily
+  WHERE  d < CURRENT_DATE
+)
+SELECT d.d, d.mean_score, b.mu, b.sigma,
+       (d.mean_score - b.mu) / NULLIF(b.sigma, 0) AS z_score
+FROM   daily d, baseline b
+WHERE  d.d = CURRENT_DATE
+  AND  ABS((d.mean_score - b.mu) / NULLIF(b.sigma, 0)) > 2.0;  -- alert row
+```
+
+#### Example 3 — Trace → dataset promotion (LangSmith API)
+
+When a trace is human-labeled “bad” in your review tool, push it into the regression dataset so CI catches it next time.
+
+```python
+from langsmith import Client
+ls = Client()
+
+DATASET = "support-bot-regressions"
+
+def promote(trace_id: str, human_label: dict):
+    run = ls.read_run(trace_id)
+    ls.create_example(
+        inputs={"question": run.inputs["question"]},
+        outputs={"expected": human_label["corrected_answer"]},
+        metadata={"source_trace": trace_id,
+                  "failure_mode": human_label["failure_mode"],
+                  "reviewer": human_label["reviewer"],
+                  "promoted_at": human_label["ts"]},
+        dataset_name=DATASET,
+    )
+# Next CI run via `langsmith eval support-bot-regressions` will catch this exact regression.
+```
+
+---
+
 ## 6.7 Exercises
 
 ### Exercise 1: Feedback Collection UI

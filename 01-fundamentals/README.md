@@ -254,6 +254,71 @@ failure_categories = {
 
 ---
 
+## 1.4b The 3-Level Eval Hierarchy (Husain)
+
+The most influential practitioner framing of LLM evals comes from Hamel Husain's ["Your AI Product Needs Evals"](https://hamel.dev/blog/posts/evals/). Mature systems progress through three levels in increasing order of cost and decreasing order of frequency:
+
+```
+Level 1  —  Unit tests / assertions             (run on every commit)
+           │  Regex, schema, length, keyword, structured-output checks
+           │  Cheap, deterministic, fast feedback during prompt iteration
+           └─ Example: assert no UUID leaks; JSON parses; tool args valid
+
+Level 2  —  Human + LLM-as-judge eval on traces (run on a cadence)
+           │  Score sampled production traces with rubrics
+           │  Iterate the judge prompt against human labels (criteria drift)
+           └─ Example: "Was the email professional and helpful?" 0/1 + critique
+
+Level 3  —  A/B testing in production            (run on major releases)
+           │  Real-user outcomes (thumbs, conversion, retention)
+           │  Statistical significance, guardrail metrics
+           └─ Example: ship new prompt to 10% → measure CSAT delta over 2 weeks
+```
+
+The most common mistake is jumping straight to Level 3 (or worse, vibes-based eval). Build Level 1 first, use Level 2 for the bulk of iteration, and validate the high-stakes wins with Level 3.
+
+---
+
+## 1.4c Choosing an Eval Method (Yan)
+
+A decision tree distilled from Eugene Yan's [survey of LLM-evaluators](https://eugeneyan.com/writing/llm-evaluators/):
+
+```
+Is the criterion OBJECTIVE (factuality, format, toxicity, instruction-following)?
+│
+├─ YES → Direct scoring (rate the response on its own)
+│        │
+│        ├─ Can you reduce to BINARY (good/bad, yes/no)?
+│        │   │
+│        │   ├─ YES → Use classification metrics: precision, recall, F1, Cohen's κ
+│        │   └─ NO  → Use ordinal correlations: Spearman's ρ, Kendall's τ
+│
+└─ NO (subjective: tone, persuasiveness, writing quality)
+         │
+         └─ Use PAIRWISE comparison ("is A or B better?")
+             - Tends to align better with human judgement than direct scoring
+             - Always swap order and re-run to control for position bias
+             - Aggregate with Cohen's κ on the binary preference
+```
+
+**Rule of thumb:** prefer binary outputs from your judge wherever possible. They are easier to interpret, easier to align to humans, and avoid the spurious precision of 1–7 Likert scales.
+
+---
+
+## 1.4d LLM-as-Judge: The Three Biases You Will Fight
+
+Every LLM-judge exhibits some mix of these systematic biases (Zheng et al. 2023, ["Judging LLM-as-a-Judge"](https://arxiv.org/abs/2306.05685)):
+
+| Bias | What it looks like | Mitigation |
+|------|--------------------|------------|
+| **Position bias** | Prefers the response shown first (or last) in pairwise comparisons | Randomize order; run both orderings and require agreement; report tie rate |
+| **Verbosity bias** | Rates longer / more elaborate responses higher even when content is equal | Match lengths; penalize unjustified length in the rubric; use a length-controlled paired baseline |
+| **Self-enhancement bias** | Prefers responses produced by the same model family (GPT-judge prefers GPT outputs) | Use a *panel of diverse judges* (PoLL — Verga et al. 2024, [arXiv:2404.18796](https://arxiv.org/abs/2404.18796)); never use the same model as judge and generator |
+
+A panel of three small judges (e.g., GPT-4o-mini + Claude Haiku 4.5 + Gemini 2.5 Flash) routinely beats a single GPT-4-class judge on both alignment with humans *and* cost.
+
+---
+
 ## 1.5 Real-World Example: Building an Eval for a Customer Support Bot
 
 ### Scenario

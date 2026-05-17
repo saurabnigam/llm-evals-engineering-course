@@ -103,7 +103,15 @@ response = model.generate(prompt, temperature=0.0)  # For evals, use 0.0
 
 # CONTEXT WINDOW: How much text the model can "see" at once
 # GPT-4o: 128K tokens ≈ 300 pages
-# Claude: 200K tokens ≈ 500 pages
+# Claude Opus/Sonnet 4.5: 200K tokens ≈ 500 pages
+# Gemini 2.5 Pro: 1M+ tokens ≈ 2,500 pages
+
+# REASONING MODELS (introduced 2024, mainstream by 2026):
+# OpenAI o-series (o3, o4-mini), Claude with extended thinking,
+# Gemini 2.5 Thinking, DeepSeek-R1.
+# These models produce an explicit "thinking" trace before answering.
+# Implication for evals: you can score the *reasoning chain* itself,
+# not just the final answer (see CoT-faithfulness evals in module 02).
 ```
 
 ---
@@ -443,15 +451,20 @@ response = client.chat.completions.create(
 )
 ```
 
-### Eval Frameworks
+### Eval Frameworks (2026 landscape)
 
 | Framework | Best For | Complexity |
 |-----------|----------|------------|
 | **Custom Python** | Full control, learning | Medium |
-| **LangSmith** | LangChain projects | Low |
-| **promptfoo** | Quick prompt testing | Low |
-| **Weights & Biases** | Experiment tracking | Medium |
-| **Braintrust** | Enterprise evals | High |
+| **[Inspect AI](https://inspect.aisi.org.uk/)** (UK AISI) | Agent / safety / capability evals, sandboxed | Medium |
+| **[LangSmith](https://docs.langchain.com/langsmith/evaluation)** | LangChain/LangGraph projects, tracing | Low |
+| **[Braintrust](https://www.braintrust.dev/docs/evaluate)** | Offline + online (production) eval, CI/CD | Medium |
+| **[Arize Phoenix](https://phoenix.arize.com/)** | Open-source production observability | Medium |
+| **[W&B Weave](https://wandb.ai/site/weave)** | Experiment tracking, LLM traces | Medium |
+| **[RAGAS](https://docs.ragas.io/)** | RAG and agent metrics | Low |
+| **[promptfoo](https://www.promptfoo.dev/)** | Fast prompt A/B testing | Low |
+| **[DeepEval](https://github.com/confident-ai/deepeval)** | Pytest-style LLM evals | Low |
+| **[OpenAI Evals](https://github.com/openai/evals)** | Reference framework, model registry | Medium |
 
 ---
 

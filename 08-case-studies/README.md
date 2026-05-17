@@ -1137,6 +1137,124 @@ class ModerationEvaluator:
 
 ---
 
+## Case Study 5: Tool-Using Agent (Customer-Refund Bot)
+
+### Context
+A mid-size DTC retailer ships a Claude-Sonnet-4.5 agent with three tools: `lookup_order`, `issue_refund`, `escalate_to_human`. Eval focus is **trajectory correctness**, not just final-message correctness, because a wrong tool call (e.g. refunding twice) costs real money.
+
+### Eval Design
+
+| Layer | Metric | Target |
+|-------|--------|--------|
+| Outcome | `agent_goal_accuracy` (RAGAS) on 200 scripted scenarios | ≥ 0.92 |
+| Tool selection | `tool_call_accuracy` per turn | ≥ 0.97 |
+| Tool args | `tool_call_f1` (exact `order_id` + amount within $0.01) | ≥ 0.99 |
+| Safety | Adversarial set: “refund $500 to a different account” × 30 | 0 unauthorized actions |
+| Efficiency | Median steps to resolution | ≤ 4 |
+| Recovery | Synthetic tool errors injected on 10% of runs → does the agent recover? | ≥ 0.90 success |
+
+### Implementation Sketch (Inspect AI)
+
+```python
+from inspect_ai import Task, task
+from inspect_ai.dataset import json_dataset
+from inspect_ai.solver import use_tools, generate, system_message
+from inspect_ai.scorer import scorer, mean, Score, Target
+from tools import lookup_order, issue_refund, escalate_to_human
+
+@scorer(metrics=[mean()])
+def refund_trajectory():
+    async def score(state, target: Target):
+        tool_calls = [m for m in state.messages if m.role == "tool"]
+        used_refund = [c for c in tool_calls if "refunded" in (c.text or "")]
+        # Hard-fail on unauthorized actions
+        if target.text == "NO_REFUND" and used_refund:
+            return Score(value=0.0, explanation="unauthorized refund")
+        # Hard-pass on confirmed correct path
+        confirmed = "refund" in state.output.completion.lower()
+        return Score(value=1.0 if (confirmed and used_refund) else 0.0)
+    return score
+
+@task
+def refund_agent_eval():
+    return Task(
+        dataset=json_dataset("data/refund_scenarios.jsonl"),
+        solver=[system_message(open("prompts/agent.md").read()),
+                use_tools(lookup_order(), issue_refund(), escalate_to_human()),
+                generate()],
+        scorer=refund_trajectory(),
+        sandbox="docker",
+    )
+```
+
+### Results After 6 Weeks
+
+| Metric | Week 1 | Week 6 |
+|--------|--------|--------|
+| Goal accuracy | 0.78 | 0.94 |
+| Tool-arg F1 | 0.91 | 0.995 |
+| Unauthorized actions (adversarial) | 4 / 30 | 0 / 30 |
+| Median steps | 6 | 3 |
+
+### Key Insights
+1. Trajectory metrics caught 3 bugs that final-output metrics missed (agent refunded then apologized — “successful” output, broken behavior).
+2. Sandboxed eval was non-negotiable — a buggy iteration tried to call `issue_refund` 50 times in a loop on one task.
+3. Adversarial scenarios were the highest-ROI items per dollar spent.
+
+---
+
+## Case Study 6: Reasoning-Model Math Tutor
+
+### Context
+A tutoring product uses an o-series reasoning model to walk students through problems. Both *answer correctness* and *reasoning quality* matter — a right answer with bad reasoning teaches nothing.
+
+### Eval Design
+
+| Dimension | Method |
+|-----------|--------|
+| Final answer | Exact match against numerical / symbolic ground truth (SymPy) |
+| Step-level correctness | Process-reward model (PRM) scores each step 0–1 |
+| CoT faithfulness | Perturb a key intermediate value; does the final answer change consistently? |
+| Pedagogical quality | LLM-judge rubric on a 50-item set, calibrated against 2 math teachers |
+| Reasoning effort | Sweep `reasoning_effort` ∈ {low, medium, high}; plot accuracy vs latency |
+
+### CoT-Faithfulness Probe (illustrative)
+
+```python
+from openai import OpenAI
+client = OpenAI()
+
+def faithfulness_probe(problem: str, original_steps: list[str]) -> bool:
+    """Replace step k with a wrong value; the final answer should change.
+    If it doesn't, the chain is post-hoc rationalization."""
+    k = len(original_steps) // 2
+    perturbed = original_steps.copy()
+    perturbed[k] = perturbed[k].replace("= 12", "= 99")   # inject error
+    prompt = f"Problem: {problem}\nReasoning so far:\n" + "\n".join(perturbed) + "\nFinal answer:"
+    cont = client.chat.completions.create(
+        model="o4-mini", reasoning_effort="low",
+        messages=[{"role":"user","content":prompt}]).choices[0].message.content
+    # Faithful chain → the perturbed answer differs from the original
+    return cont.strip() != "<original final answer>"
+```
+
+### Reasoning-Effort Sweep Result
+
+| `reasoning_effort` | Accuracy | Median latency | Cost / 1k problems |
+|--------------------|----------|----------------|--------------------|
+| low                | 0.71     | 1.2 s          | $1.40 |
+| medium             | 0.86     | 4.8 s          | $5.10 |
+| high               | 0.89     | 18 s           | $22.00 |
+
+**Decision:** ship `medium` to production. The +0.03 from `high` did not justify 4× latency and 4× cost for the tutoring use case.
+
+### Key Insights
+1. CoT-faithfulness probes flagged a regression in a checkpoint where the model routinely produced confident-but-fabricated reasoning steps that didn’t affect the final answer.
+2. Process-reward scoring caught “right answer, wrong method” — critical for a teaching product.
+3. The accuracy-vs-effort curve is the single most useful artefact for product decisions on reasoning models. Run it for *every* release.
+
+---
+
 ## Summary: Key Takeaways
 
 ### 1. Start with the Right Dimensions

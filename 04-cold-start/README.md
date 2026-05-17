@@ -886,6 +886,96 @@ A practical timeline for bootstrapping evaluations:
 
 ---
 
+## 4.8b Worked Examples (2026)
+
+Three concrete patterns for getting from "empty dataset" to "100 trustworthy items" in a week.
+
+#### Example 1 — Synthetic seed set with structured outputs
+
+Frontier models in 2026 support guaranteed JSON schemas, which makes synthetic-data generation reliable instead of regex-prone.
+
+```python
+# pip install openai pydantic
+from pydantic import BaseModel, Field
+from typing import Literal
+from openai import OpenAI
+
+client = OpenAI()
+
+class SupportTicket(BaseModel):
+    user_message: str = Field(..., description="What the customer says")
+    intent: Literal["refund", "shipping", "product_question", "complaint"]
+    expected_action: str = Field(..., description="What the bot should do")
+    difficulty: Literal["easy", "medium", "hard"]
+
+class Batch(BaseModel):
+    items: list[SupportTicket]
+
+resp = client.chat.completions.parse(
+    model="gpt-4o-2024-11-20",
+    response_format=Batch,
+    messages=[{"role": "user", "content":
+        "Generate 30 diverse customer-support tickets for a DTC apparel brand. "
+        "Cover all four intents and all three difficulties. Vary tone, length, "
+        "non-native English, and include 3 adversarial / jailbreak attempts."}],
+)
+for t in resp.choices[0].message.parsed.items:
+    print(t.intent, t.difficulty, "|", t.user_message[:80])
+```
+
+Always have a human spot-check at least 20% of synthetic items before promoting them into your eval set — LLM generators have their own distributional biases.
+
+#### Example 2 — EvalGen-style criteria discovery
+
+Don't guess your rubric. Grade outputs first, *then* let the LLM propose the criteria your grading implies.
+
+```python
+# 1. Have a human label ~30 outputs as good/bad with a one-line critique.
+labels = [
+    {"output": "Sure! Click 'Forgot password' on the login page.",
+     "label": "good", "critique": "clear, actionable, brand voice"},
+    {"output": "I cannot help with that.",
+     "label": "bad",  "critique": "refuses a benign request"},
+    # ...28 more
+]
+
+# 2. Ask Claude to extract a rubric from your labels.
+from anthropic import Anthropic
+a = Anthropic()
+rubric = a.messages.create(
+    model="claude-sonnet-4-5", max_tokens=600, temperature=0,
+    messages=[{"role": "user", "content":
+        f"Here are 30 graded support-bot outputs:\n\n{labels}\n\n"
+        "Infer a 5-criterion rubric (each criterion binary, with a one-sentence "
+        "definition) that would reproduce these grades. Return JSON."}],
+).content[0].text
+print(rubric)
+# Now you have a HUMAN-derived rubric you can hand to an LLM-judge.
+```
+
+This is the EvalGen / "Who Validates the Validators" (Shankar et al. 2024) workflow: criteria emerge *from* the data instead of being imposed on it.
+
+#### Example 3 — Bootstrap from production logs after week 1
+
+Once you have any traffic, the cheapest gold examples are real ones. Sample from the *low-confidence* tail.
+
+```python
+import pandas as pd
+
+logs = pd.read_parquet("prod_traces.parquet")  # cols: id, input, output, judge_score, judge_conf
+
+# Stratified review queue: 60% low-confidence, 30% low-score, 10% random
+low_conf  = logs.nsmallest(60, "judge_conf")
+low_score = logs.nsmallest(30, "judge_score")
+random_   = logs.sample(10, random_state=42)
+
+review = pd.concat([low_conf, low_score, random_]).drop_duplicates("id")
+review.to_csv("week2_human_review.csv", index=False)
+print(f"{len(review)} items queued for human labeling — promote 'good' ones to eval set.")
+```
+
+---
+
 ## 4.9 Exercises
 
 ### Exercise 1: Cold Start Plan

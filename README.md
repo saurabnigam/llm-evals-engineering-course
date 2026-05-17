@@ -1,8 +1,10 @@
 # Eval Engineering: Complete Study Guide
 
 > **The Art and Science of Evaluating AI/LLM Systems at Scale**
-> 
-> A comprehensive guide for software engineers and aspiring AI researchers learning to build production-grade evaluation systems for LLMs, RAG systems, and AI agents. Updated for 2026 with the latest research from Anthropic, OpenAI, and the broader AI safety community.
+>
+> A comprehensive guide for software engineers and aspiring AI researchers learning to build production-grade evaluation systems for LLMs, RAG systems, and AI agents. Updated **May 2026** with the latest research and practice from Anthropic, OpenAI, the UK AI Security Institute (AISI), and the broader AI safety community.
+>
+> **Companion reading:** Hamel Husain's ["Your AI Product Needs Evals"](https://hamel.dev/blog/posts/evals/) and Eugene Yan's ["Evaluating LLM-Evaluators"](https://eugeneyan.com/writing/llm-evaluators/) are the two best practitioner essays in the field — read them alongside this guide.
 
 ## Table of Contents
 
@@ -31,12 +33,13 @@
 
 This guide has been substantially updated with:
 
-- **Module 11**: Deep dive into how frontier models (Claude Opus 4.6, Sonnet, GPT-4) are actually trained -- pretraining, SFT, reward modeling, RLHF, Constitutional AI, and safety fine-tuning
+- **Module 11**: Deep dive into how frontier models (Claude Opus 4.5/Sonnet 4.5, GPT-4o/o-series, Gemini 2.x) are actually trained -- pretraining, SFT, reward modeling, RLHF, Constitutional AI, and safety fine-tuning
 - **Module 12**: Eval-training separation, benchmark contamination detection, dynamic benchmarks, and the DCR framework
 - **Module 13**: Research frontier -- alignment faking detection, open problems, how to contribute to AI safety research, and a complete path from eval engineer to AI researcher
-- **Module 10 update**: Alignment faking evaluation, EDDOps (Evaluation-Driven Development and Operations), self-evolving eval systems
-- **Module 02 update**: Psychometric evaluation (IRT, Bloom's taxonomy), adaptive testing, dynamic benchmark generation, evaluation-driven development workflow
-- **Latest research** from Anthropic (Constitutional AI 2026 revision, modular red team scaffolds, SHADE-Arena, alignment faking), NVIDIA (front-loading reasoning), and ICLR 2026 (RL compute scaling laws)
+- **Module 10 update**: Alignment faking evaluation, sandbagging and sabotage evals, SHADE-Arena, EDDOps (Evaluation-Driven Development and Operations), self-evolving eval systems
+- **Module 02 update**: Modern LLM-as-judge practice (pairwise vs. direct, panel of judges, calibration, bias controls), agent trajectory evals, reasoning-trace / CoT-faithfulness evals, and dynamic benchmark generation
+- **Module 06 update**: Online (production) evals with async LLM-judge scoring, drift detection, and the trace → dataset → eval flywheel
+- **Latest research** from Anthropic (Constitutional AI revisions, alignment faking, sabotage evaluations, modular red-team scaffolds), UK AISI (Inspect framework), NVIDIA (front-loading reasoning), Apollo Research (scheming evals), and ICLR/NeurIPS 2025-2026
 
 ---
 
@@ -170,12 +173,23 @@ Week 3: Module 13 (Research Frontier + Project Planning)
 
 This guide uses:
 - **Python 3.11+**
-- **LangChain** for LLM orchestration
-- **OpenAI API** (GPT-4o, GPT-4o-mini) and **Anthropic API** (Claude Opus, Sonnet)
-- **Pydantic** for data validation
+- **LangChain / LangGraph** for LLM and agent orchestration
+- **OpenAI API** (GPT-4o, GPT-4o-mini, o3/o4-mini reasoning models) and **Anthropic API** (Claude Opus 4.5, Sonnet 4.5, Haiku 4.5)
+- **Pydantic** for data validation and structured outputs
 - **Redis/Celery** for distributed processing
 - **GitHub Actions** for CI/CD
 - **NumPy/SciPy/scikit-learn** for statistical analysis and calibration
+
+### Modern eval tooling landscape (2026)
+
+| Category | Tools |
+|----------|-------|
+| **Eval frameworks** | [Inspect AI](https://inspect.aisi.org.uk/) (UK AISI — agent-first, sandboxed, 200+ benchmarks), [OpenAI Evals](https://github.com/openai/evals), [Promptfoo](https://www.promptfoo.dev/), [DeepEval](https://github.com/confident-ai/deepeval) |
+| **Hosted eval + tracing** | [LangSmith](https://docs.langchain.com/langsmith/evaluation), [Braintrust](https://www.braintrust.dev/), [Arize Phoenix](https://phoenix.arize.com/), [Weights & Biases Weave](https://wandb.ai/site/weave), [Langfuse](https://langfuse.com/), [Helicone](https://www.helicone.ai/) |
+| **RAG-specific** | [RAGAS](https://docs.ragas.io/), [TruLens](https://www.trulens.org/), [DeepEval RAG metrics](https://github.com/confident-ai/deepeval) |
+| **Tracing standards** | [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), [OpenLLMetry / Traceloop](https://github.com/traceloop/openllmetry) |
+| **Safety / red-team** | [Inspect Evals safety suite](https://inspect.aisi.org.uk/evals/), [Garak](https://github.com/NVIDIA/garak), [PyRIT](https://github.com/Azure/PyRIT), Anthropic's [SHADE-Arena](https://alignment.anthropic.com/2025/strengthening-red-teams/) |
+| **Public leaderboards** | [Chatbot Arena (LMSYS)](https://lmarena.ai/), [LiveBench](https://livebench.ai/), [SWE-Bench Verified](https://www.swebench.com/), [GAIA](https://huggingface.co/spaces/gaia-benchmark/leaderboard), [SEAL leaderboards (Scale)](https://scale.com/leaderboard) |
 
 ---
 
@@ -279,11 +293,17 @@ This is a living document. Suggestions welcome!
 - [Training a Helpful and Harmless Assistant with RLHF](https://arxiv.org/abs/2204.05862) -- Anthropic
 - [Holistic Evaluation of Language Models (HELM)](https://arxiv.org/abs/2211.09110) -- Stanford
 - [Scaling Laws for Neural Language Models](https://arxiv.org/abs/2001.08361) -- Kaplan et al.
+- [G-Eval: NLG Evaluation using GPT-4 with Better Human Alignment](https://arxiv.org/abs/2303.16634) -- Liu et al.
+- [Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena](https://arxiv.org/abs/2306.05685) -- Zheng et al.
+- [Replacing Judges with Juries (Panel of LLM evaluators / PoLL)](https://arxiv.org/abs/2404.18796) -- Verga et al.
 
 ### Safety & Alignment Research
-- [Alignment Faking in Large Language Models](https://www.anthropic.com/research/alignment-faking) -- Anthropic (2024)
+- [Alignment Faking in Large Language Models](https://www.anthropic.com/research/alignment-faking) -- Anthropic & Redwood Research (Dec 2024, [arXiv:2412.14093](https://arxiv.org/abs/2412.14093))
+- [Sabotage Evaluations for Frontier Models](https://www.anthropic.com/research/sabotage-evaluations) -- Anthropic
+- [Many-Shot Jailbreaking](https://www.anthropic.com/research/many-shot-jailbreaking) -- Anthropic
 - [Strengthening Red Teams: Modular Scaffold for Control Evaluations](https://alignment.anthropic.com/2025/strengthening-red-teams/) -- Anthropic (2025)
-- [Claude's Constitution (2026 Revision)](https://www.anthropic.com/constitution) -- Anthropic
+- [Claude's Constitution](https://www.anthropic.com/constitution) -- Anthropic
+- [Apollo Research: Scheming evaluations](https://www.apolloresearch.ai/research)
 
 ### Evaluation Research (2025-2026)
 - [AdEval: Alignment-based Dynamic Evaluation](https://arxiv.org/abs/2501.13983) -- 2025
@@ -293,9 +313,18 @@ This is a living document. Suggestions welcome!
 
 ### Tools & Frameworks
 - [OpenAI's Eval Framework](https://github.com/openai/evals)
-- [LangSmith Documentation](https://docs.smith.langchain.com/)
-- [Braintrust AI Evaluation](https://www.braintrustdata.com/)
+- [LangSmith Evaluation Docs](https://docs.langchain.com/langsmith/evaluation)
+- [Braintrust AI Evaluation](https://www.braintrust.dev/docs/evaluate)
+- [Inspect AI (UK AISI)](https://inspect.aisi.org.uk/)
+- [RAGAS](https://docs.ragas.io/) — RAG and agent evaluation metrics
+- [Arize Phoenix](https://phoenix.arize.com/) — open-source observability
+- [Weights & Biases Weave](https://wandb.ai/site/weave)
 - [Anthropic's Transparency Hub](https://www.anthropic.com/transparency)
+
+### Practitioner Essays (must-read)
+- Hamel Husain — [Your AI Product Needs Evals](https://hamel.dev/blog/posts/evals/)
+- Eugene Yan — [Evaluating LLM-Evaluators (LLM-as-Judge)](https://eugeneyan.com/writing/llm-evaluators/)
+- Shreya Shankar et al. — [Who Validates the Validators? (EvalGen)](https://arxiv.org/abs/2404.12272)
 
 ### Transparency Reports
 - [Anthropic FMTI Transparency Report (December 2025)](https://crfm.stanford.edu/fmti/December-2025/company-reports/Anthropic_FinalReport_FMTI2025.html)

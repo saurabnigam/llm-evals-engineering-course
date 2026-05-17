@@ -1232,6 +1232,219 @@ EVALUATION-DRIVEN DEVELOPMENT WORKFLOW
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### 2.7.4 RAG-Specific Evaluation (RAGAS metric set)
+
+For Retrieval-Augmented Generation systems, evaluate the retriever and the generator separately, then end-to-end. The de-facto open-source library is [RAGAS](https://docs.ragas.io/).
+
+| Component | Metric | What it measures |
+|-----------|--------|------------------|
+| **Retriever** | `context_precision` | Of retrieved chunks, fraction relevant to the question |
+| **Retriever** | `context_recall` | Of relevant info available, fraction actually retrieved |
+| **Retriever** | precision@k, recall@k, MRR, nDCG, hit rate | Classical IR metrics on the candidate list |
+| **Generator** | `faithfulness` / `groundedness` | Are claims in the answer supported by the retrieved context? (hallucination check) |
+| **Generator** | `answer_relevancy` / `response_relevancy` | Does the answer actually address the question? |
+| **End-to-end** | `factual_correctness` | Match against ground truth answer |
+| **End-to-end** | `noise_sensitivity` | Does adding irrelevant chunks degrade the answer? |
+| **End-to-end** | citation accuracy | Are inline citations real and pointing to the right chunk? |
+
+```python
+# Minimal RAGAS example (2026 API)
+from ragas import evaluate
+from ragas.metrics import (
+    Faithfulness, ResponseRelevancy,
+    LLMContextPrecisionWithReference, LLMContextRecall,
+    NoiseSensitivity,
+)
+
+result = evaluate(
+    dataset=eval_dataset,  # columns: question, contexts, answer, ground_truth
+    metrics=[
+        Faithfulness(),
+        ResponseRelevancy(),
+        LLMContextPrecisionWithReference(),
+        LLMContextRecall(),
+        NoiseSensitivity(),
+    ],
+)
+```
+
+**Test-set generation:** RAGAS can synthesize a knowledge-graph-grounded test set from your corpus, including single-hop and multi-hop queries with personas. Treat the generated set as a starting point — *always* hand-curate at least 30–50 items.
+
+### 2.7.5 Agent Evaluation (trajectory + outcome)
+
+Single-turn eval is insufficient for tool-using agents. You need to score the **whole trajectory** (steps, tool calls, intermediate states), not just the final answer.
+
+| Dimension | Metric / approach |
+|-----------|-------------------|
+| **Outcome** | Did the agent achieve the goal? (`agent_goal_accuracy` in RAGAS) |
+| **Tool selection** | `tool_call_accuracy` — was each call to the right tool? |
+| **Tool arguments** | `tool_call_f1` — were the arguments structurally and semantically right? |
+| **Topic adherence** | Does the agent stay within the allowed task scope across turns? |
+| **Efficiency** | Steps to completion, tokens used, wall-clock time |
+| **Recovery** | When a tool errors, does the agent recover or loop? |
+| **Safety** | Did the agent attempt unauthorized actions? Probe with adversarial prompts. |
+
+**Sandboxed task benchmarks (2026 standard):**
+- [SWE-Bench Verified](https://www.swebench.com/) — real GitHub issues, repo-level coding agents
+- [GAIA](https://huggingface.co/spaces/gaia-benchmark/leaderboard) — general assistant tasks across web/file/multimodal
+- [τ-Bench (Tau-Bench)](https://github.com/sierra-research/tau-bench) — customer-service agents with realistic tool APIs and a user simulator
+- [WebArena](https://webarena.dev/) and [OSWorld](https://os-world.github.io/) — browser/desktop interaction
+- [Cybench](https://cybench.github.io/) — cybersecurity capture-the-flag agents
+- [SHADE-Arena](https://alignment.anthropic.com/2025/strengthening-red-teams/) — Anthropic's modular control-evaluation scaffold for sabotage/control tests
+
+**Tooling:** [Inspect AI](https://inspect.aisi.org.uk/) is the de-facto framework for agent evals — first-class support for ReAct and multi-agent solvers, Docker/Kubernetes sandboxes, MCP tool integration, and an "agent bridge" that lets you score externally-built agents (Claude Code, Codex CLI, Gemini CLI) inside the Inspect harness.
+
+### 2.7.6 Reasoning-Model Evaluation (CoT faithfulness)
+
+Reasoning models (OpenAI o-series, Claude with extended thinking, Gemini 2.5 Thinking, DeepSeek-R1) emit an explicit thinking trace before the final answer. This opens up a class of evals that simply did not exist before:
+
+- **Outcome accuracy** — the usual answer-correctness metric.
+- **CoT faithfulness** — does the chain actually reflect the computation that produced the answer, or is it post-hoc rationalization? Probe by perturbing the chain and checking whether the final answer changes coherently. (See Anthropic's [Reasoning Models Don't Always Say What They Think](https://www.anthropic.com/research/reasoning-models-dont-always-say-what-they-think).)
+- **Process supervision** — score every reasoning step (PRM-style), not just the final answer. Catches models that get the right answer for the wrong reason.
+- **Reasoning-effort trade-off** — sweep `reasoning_effort` (low/medium/high) and plot accuracy vs. tokens vs. latency. Most production tasks plateau well below "high".
+- **Hidden-CoT integrity** — for models that hide their CoT from users (o-series), evaluate the *summary* shown to the user for fidelity to the underlying chain.
+- **Reasoning leakage** — does the model accidentally reveal evaluation hints, system prompt, or tool outputs in its visible CoT?
+
+### 2.7.7 Tooling Pointer (2026 Stack)
+
+| Need | Pick |
+|------|------|
+| Safety / capability / agent benchmarks, sandboxed | [Inspect AI](https://inspect.aisi.org.uk/) |
+| Hosted offline + CI + online (production) scoring | [Braintrust](https://www.braintrust.dev/docs/evaluate), [LangSmith](https://docs.langchain.com/langsmith/evaluation) |
+| Open-source production observability | [Arize Phoenix](https://phoenix.arize.com/), [Langfuse](https://langfuse.com/), [Helicone](https://www.helicone.ai/) |
+| Experiment tracking + LLM traces | [W&B Weave](https://wandb.ai/site/weave) |
+| RAG and agent metrics | [RAGAS](https://docs.ragas.io/), [TruLens](https://www.trulens.org/) |
+| Pytest-style assertions for LLMs | [DeepEval](https://github.com/confident-ai/deepeval) |
+| Fast prompt A/B in YAML | [Promptfoo](https://www.promptfoo.dev/) |
+| Reference framework, model registry | [OpenAI Evals](https://github.com/openai/evals) |
+| Adversarial / red-team probes | [Garak](https://github.com/NVIDIA/garak), [PyRIT](https://github.com/Azure/PyRIT) |
+| Tracing standard | [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), [OpenLLMetry](https://github.com/traceloop/openllmetry) |
+
+### 2.7.8 Worked Examples
+
+Three end-to-end snippets that put the 2026 patterns above into practice.
+
+#### Example A — Pairwise judge with position-bias control + Cohen's κ
+
+```python
+# pip install anthropic scikit-learn
+import random, json
+from anthropic import Anthropic
+from sklearn.metrics import cohen_kappa_score
+
+client = Anthropic()
+
+JUDGE_PROMPT = """You are comparing two assistant responses to the same user message.
+Return ONLY JSON: {{"winner": "A" | "B" | "tie", "reason": "..."}}.
+
+User message:
+{user}
+
+Response A:
+{a}
+
+Response B:
+{b}"""
+
+def judge_once(user, a, b):
+    msg = client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=300,
+        temperature=0,
+        messages=[{"role": "user",
+                   "content": JUDGE_PROMPT.format(user=user, a=a, b=b)}],
+    )
+    return json.loads(msg.content[0].text)["winner"]
+
+def pairwise(user, a, b):
+    """Run BOTH orderings; only count agreements as a real win."""
+    forward = judge_once(user, a, b)              # A in slot 1
+    reverse = judge_once(user, b, a)              # A in slot 2
+    # 'A' wins forward maps to 'B' wins reverse — flip and require agreement
+    flipped = {"A": "B", "B": "A", "tie": "tie"}[reverse]
+    if forward == flipped:
+        return forward                            # consistent verdict
+    return "tie"                                  # position-sensitive → tie
+
+# Compare against human labels collected in your annotation tool
+human   = ["A", "A", "tie", "B", "A", "B"]
+judge   = [pairwise(*row) for row in eval_rows]   # eval_rows = [(user,a,b), ...]
+print("Cohen's κ vs humans:", cohen_kappa_score(human, judge))
+# Rule of thumb: κ ≥ 0.6 = ship the judge; 0.4–0.6 = iterate prompt; <0.4 = redesign.
+```
+
+#### Example B — Minimal RAG eval with RAGAS
+
+```python
+# pip install ragas datasets langchain-openai
+from datasets import Dataset
+from ragas import evaluate
+from ragas.metrics import Faithfulness, ResponseRelevancy, LLMContextRecall
+
+data = Dataset.from_list([{
+    "question": "What is the refund window for opened electronics?",
+    "contexts": [
+        "Electronics may be returned within 30 days if unopened.",
+        "Opened electronics are eligible for store credit within 14 days.",
+    ],
+    "answer":       "You can get store credit within 14 days for opened electronics.",
+    "ground_truth": "Opened electronics qualify for store credit within 14 days.",
+}])
+
+result = evaluate(data, metrics=[Faithfulness(),
+                                 ResponseRelevancy(),
+                                 LLMContextRecall()])
+print(result.to_pandas())
+# faithfulness  answer_relevancy  context_recall
+#         1.00              0.93            1.00
+# Interpret: answer is grounded (1.0), addresses the question (0.93),
+# and the retrieved context contained the gold info (1.0).
+```
+
+#### Example C — Agent trajectory eval with Inspect AI (sandboxed)
+
+```python
+# pip install inspect-ai && inspect eval refund_agent.py --model anthropic/claude-sonnet-4-5
+from inspect_ai import Task, task
+from inspect_ai.dataset import Sample
+from inspect_ai.solver import use_tools, generate, system_message
+from inspect_ai.tool import tool
+from inspect_ai.scorer import scorer, accuracy, Score, Target
+
+@tool
+def issue_refund():
+    async def execute(order_id: str, amount: float) -> str:
+        """Issue a refund. amount must be <= order total."""
+        return f"refunded ${amount:.2f} for {order_id}"
+    return execute
+
+@scorer(metrics=[accuracy()])
+def trajectory_scorer():
+    """Score = 1 only if the agent called issue_refund with the right args
+    AND the final user-facing message confirms the refund."""
+    async def score(state, target: Target):
+        calls = [m for m in state.messages if m.role == "tool"]
+        used_refund = any("refunded" in (c.text or "") for c in calls)
+        confirmed   = "refund" in state.output.completion.lower()
+        ok = used_refund and confirmed
+        return Score(value=1.0 if ok else 0.0,
+                     explanation=f"used_refund={used_refund} confirmed={confirmed}")
+    return score
+
+@task
+def refund_agent():
+    return Task(
+        dataset=[Sample(input="I want a refund on order A-42 for $19.99",
+                        target="refund issued")],
+        solver=[system_message("You are a support agent. Use tools."),
+                use_tools(issue_refund()), generate()],
+        scorer=trajectory_scorer(),
+        sandbox="docker",   # <— isolates each task; safe for tool execution
+    )
+```
+
+Run with `inspect view` to see per-sample traces, tool calls, and aggregate accuracy. The same harness scales to SWE-Bench Verified, GAIA, τ-Bench, etc., without code changes — swap the dataset and scorer.
+
 ---
 
 ## 2.8 Exercises

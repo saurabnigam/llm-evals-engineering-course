@@ -1222,6 +1222,112 @@ class SlackNotifier:
 
 ---
 
+## 7.7b Worked Examples (2026)
+
+Three drop-in CI patterns that make eval gates fast, cheap, and trustworthy.
+
+#### Example 1 — GitHub Actions: Inspect AI eval as a required check
+
+```yaml
+# .github/workflows/evals.yml
+name: evals
+on:
+  pull_request:
+    paths: ["prompts/**", "src/**", "evals/**"]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install inspect-ai openai anthropic
+      - name: Run smoke evals (cheap model, 50 samples)
+        env:
+          OPENAI_API_KEY:    ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          inspect eval evals/smoke.py \
+            --model openai/gpt-4o-mini \
+            --limit 50 \
+            --log-dir logs/ \
+            --fail-on-error
+      - name: Enforce regression gate (mean accuracy ≥ 0.85)
+        run: |
+          python evals/gate.py logs/ --metric accuracy --min 0.85
+      - uses: actions/upload-artifact@v4
+        with: { name: eval-logs, path: logs/ }
+```
+
+#### Example 2 — Statistical regression gate (bootstrapped CI, not raw delta)
+
+Don’t fail a PR because mean accuracy dropped 0.01 — that’s noise. Compare 95% bootstrap intervals.
+
+```python
+# evals/gate.py
+import sys, json, glob, numpy as np
+
+def bootstrap_ci(scores, n=10_000, alpha=0.05):
+    rng = np.random.default_rng(0)
+    means = [rng.choice(scores, size=len(scores), replace=True).mean() for _ in range(n)]
+    return float(np.quantile(means, alpha/2)), float(np.quantile(means, 1 - alpha/2))
+
+def load(log_dir):
+    scores = []
+    for f in glob.glob(f"{log_dir}/*.json"):
+        for s in json.load(open(f))["samples"]:
+            scores.append(s["score"]["value"])
+    return scores
+
+curr = load(sys.argv[1])
+base = load("baseline_logs/")          # checked into the repo or pulled from main
+
+lo_c, hi_c = bootstrap_ci(curr)
+lo_b, hi_b = bootstrap_ci(base)
+print(f"baseline: [{lo_b:.3f}, {hi_b:.3f}]   current: [{lo_c:.3f}, {hi_c:.3f}]")
+
+# Fail only if the current UPPER bound is below the baseline LOWER bound
+# (i.e. we are statistically confident there's a regression).
+if hi_c < lo_b:
+    sys.exit(f"REGRESSION: current {hi_c:.3f} < baseline-low {lo_b:.3f}")
+print("No statistically-significant regression.")
+```
+
+#### Example 3 — Two-tier CI: smoke on every push, full eval on merge to main
+
+```yaml
+# .github/workflows/evals-full.yml
+name: evals-full
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * *"   # nightly 06:00 UTC
+
+jobs:
+  full:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install inspect-ai openai anthropic
+      - name: Full eval suite (1000 samples, frontier model, batch API)
+        env:
+          OPENAI_API_KEY:    ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          inspect eval evals/full.py \
+            --model anthropic/claude-sonnet-4-5 \
+            --limit 1000 --epochs 3 \
+            --log-dir logs/
+      - name: Push results to Braintrust dashboard
+        run: braintrust experiment push logs/
+```
+
+Key idea: PRs run a fast/cheap subset (smoke) for fast feedback; main and nightly runs use the strong-model + larger-N suite to catch subtler regressions, with the cost amortized via Batch APIs (see module 5).
+
+---
+
 ## 7.8 Exercises
 
 ### Exercise 1: Set Up Basic CI/CD Evals

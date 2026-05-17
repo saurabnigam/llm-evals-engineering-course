@@ -1058,6 +1058,26 @@ print(f"Results: {results}")
 
 ---
 
+## 9.6b Beyond LangChain: The 2026 Eval-Tool Landscape
+
+LangChain/LangSmith is one of several mature options. For new projects in 2026, pick a tool based on the *job to be done*:
+
+| If you need... | Pick | Why |
+|----------------|------|-----|
+| Sandboxed agent / capability / safety evals | **[Inspect AI](https://inspect.aisi.org.uk/)** (UK AISI) | Agent-first, Docker/K8s sandboxes, MCP tools, 200+ benchmarks, agent bridge for external CLIs |
+| Hosted offline + CI + online (production) scoring | **[Braintrust](https://www.braintrust.dev/docs/evaluate)** | First-class online scoring on live traces, strong CI integration |
+| LangChain/LangGraph projects, tracing-first | **[LangSmith](https://docs.langchain.com/langsmith/evaluation)** | Native tracing for LCEL/LangGraph, online evaluators |
+| Self-host open-source observability | **[Arize Phoenix](https://phoenix.arize.com/)** or **[Langfuse](https://langfuse.com/)** | OSS, OpenTelemetry-native |
+| RAG and agent metric library | **[RAGAS](https://docs.ragas.io/)** | Faithfulness, context precision/recall, agent goal accuracy, KG-based testset gen |
+| Pytest-style assertions for LLM outputs | **[DeepEval](https://github.com/confident-ai/deepeval)** | Drops into existing pytest CI |
+| YAML-first prompt A/B testing | **[Promptfoo](https://www.promptfoo.dev/)** | No-code config, fastest path to a comparison report |
+| Reference framework, model registry | **[OpenAI Evals](https://github.com/openai/evals)** | The original eval registry, still maintained |
+| Adversarial / red-team probes | **[Garak](https://github.com/NVIDIA/garak)** (NVIDIA), **[PyRIT](https://github.com/Azure/PyRIT)** (Microsoft) | Prebuilt jailbreak / prompt-injection probes |
+
+You will almost always end up with **two of these in production**: one for offline / CI evals (Inspect AI or Braintrust), and one for online tracing + drift monitoring (Phoenix, Langfuse, or LangSmith). Wire both to OpenTelemetry GenAI traces so you can swap either side without re-instrumenting.
+
+---
+
 ## 9.7 Complete Example: Evaluating a Customer Service Bot
 
 ```python

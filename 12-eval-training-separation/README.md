@@ -762,6 +762,65 @@ class PrivateEvalVault:
 
 ---
 
+## 12.8b Worked Examples (2026)
+
+Two small probes that catch the most common contamination patterns in 5 minutes.
+
+#### Example 1 — Canary-string memorization probe
+
+If a model can complete a benchmark item from a tiny prefix, it has likely seen it during training.
+
+```python
+from openai import OpenAI
+client = OpenAI()
+
+def memorization_score(item: dict, model="gpt-4o") -> float:
+    """Return fraction of the GROUND-TRUTH answer the model regenerates
+    given only the FIRST 8 WORDS of the canonical question."""
+    prefix = " ".join(item["question"].split()[:8])
+    out = client.chat.completions.create(
+        model=model, temperature=0,
+        messages=[{"role": "user",
+                   "content": f"Continue this benchmark item verbatim:\n{prefix}"}],
+    ).choices[0].message.content
+    # Token-overlap with the *exact* canonical answer is the smoking gun
+    answer_tokens = set(item["answer"].lower().split())
+    out_tokens    = set(out.lower().split())
+    return len(answer_tokens & out_tokens) / max(1, len(answer_tokens))
+
+# >0.5 on randomly sampled items → strong contamination signal
+scores = [memorization_score(x) for x in mmlu_sample]
+print("mean overlap:", sum(scores)/len(scores))
+```
+
+#### Example 2 — Original vs paraphrased delta
+
+If the model scores meaningfully higher on the canonical wording than on a semantically-identical paraphrase, the gap is (mostly) memorization.
+
+```python
+from anthropic import Anthropic
+client = Anthropic()
+
+def paraphrase(q: str) -> str:
+    r = client.messages.create(
+        model="claude-sonnet-4-5", max_tokens=200, temperature=0.4,
+        messages=[{"role":"user","content":
+            f"Paraphrase this question. Keep the answer the same. "
+            f"Change wording, sentence structure, and any proper nouns that don't "
+            f"affect the answer.\n\nQ: {q}"}])
+    return r.content[0].text
+
+orig_acc = run_eval(items)                              # canonical wording
+para_acc = run_eval([{**i, "question": paraphrase(i["question"])} for i in items])
+print(f"Original: {orig_acc:.2%}   Paraphrased: {para_acc:.2%}   Gap: {orig_acc-para_acc:+.2%}")
+# Healthy gap: 0–3%. >5% gap → contamination strongly suspected.
+# Always report BOTH numbers in any benchmark claim.
+```
+
+These two probes — plus the dynamic-rewording recipe in section 12.6 — are the minimum hygiene required to take any 2026 leaderboard score seriously.
+
+---
+
 ## 12.9 Exercises
 
 ### Exercise 1: Contamination Audit
