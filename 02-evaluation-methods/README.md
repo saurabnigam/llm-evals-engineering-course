@@ -321,7 +321,7 @@ print(f"Score: {results['score']}")  # 1.0
 │                          │                                       │
 │                          ▼                                       │
 │   ┌──────────────────────────────────────────────┐              │
-│   │ Judge LLM (GPT-4, Claude, etc.)             │              │
+│   │ Judge LLM (GPT-5.5, Opus 4.8, etc.)         │              │
 │   └──────────────────────────────────────────────┘              │
 │                          │                                       │
 │                          ▼                                       │
@@ -349,7 +349,7 @@ class EvalResult(BaseModel):
 class LLMJudge:
     """Single LLM evaluator"""
     
-    def __init__(self, model: str = "gpt-4o"):
+    def __init__(self, model: str = "gpt-5.5"):
         self.client = OpenAI()
         self.model = model
     
@@ -440,13 +440,15 @@ class MultiJudgePanel:
             'individual_results': results
         }
 
-# Example: Panel of diverse judges
+# Example: Panel of diverse judges (mix providers AND sizes)
 panel = MultiJudgePanel([
-    LLMJudge(model="gpt-4o"),
-    LLMJudge(model="claude-3-opus-20240229"),
-    LLMJudge(model="gpt-4o-mini")  # Different perspective
+    LLMJudge(model="gpt-5.5"),
+    LLMJudge(model="claude-sonnet-4-6"),
+    LLMJudge(model="claude-haiku-4-5")  # Small judge: cheap dissenting vote
 ])
 ```
+
+**Why panels beat a single big judge:** the "Replacing Judges with Juries" result (PoLL) showed a panel of 3 small, diverse judges outperforms a single GPT-4 judge with less intra-model bias at ~1/7 the cost ([arXiv 2404.18796](https://arxiv.org/abs/2404.18796)). This is now standard at frontier scale: the Petri 3.0 cross-lab behavioral audit scores every transcript with **three judges from different providers** (Opus 4.7, GPT-5.5, Gemini 3.1 Pro) and reports the average ([Fable 5 system card §6.2.3.3](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf)). For composing larger judge pipelines, see [Verdict](https://arxiv.org/pdf/2502.18018).
 
 ### 2.3.3 Pairwise Comparison (A/B Evaluation)
 
@@ -493,7 +495,7 @@ class ComparisonResult(Enum):
 class PairwiseEvaluator:
     """Compare two responses directly"""
     
-    def __init__(self, model: str = "gpt-4o"):
+    def __init__(self, model: str = "gpt-5.5"):
         self.client = OpenAI()
         self.model = model
     
@@ -616,7 +618,7 @@ Respond in JSON format with a "scores" object containing each criterion.
 """
         
         response = self.client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5.5",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
@@ -659,6 +661,127 @@ code_review_rubric = {
 evaluator = RubricEvaluator(code_review_rubric)
 ```
 
+#### The per-example rubric pattern (HealthBench / GDPval — the 2025-2026 default)
+
+The rubric above is *global*: one rubric for every sample. The pattern that took over in 2025 is **per-example rubrics** — each test case carries its own expert-written, weighted criteria, and the judge grades each criterion **independently** (met / not met), never as one omnibus quality call.
+
+The two canonical references:
+
+| | [HealthBench](https://cdn.openai.com/pdf/bd7a39d5-9e9f-47b3-903c-8b847ca650c7/healthbench_paper.pdf) (OpenAI, May 2025) | [GDPval](https://openai.com/index/gdpval/) (OpenAI, Sept 2025) |
+|---|---|---|
+| **What** | 5,000 physician-refined multi-turn health conversations, 26 specialties, 49 languages | 1,320 real deliverable tasks from 44 occupations in 9 GDP-heavy industries |
+| **Who writes the gold standard** | Physicians: each conversation gets its own rubric (mean ~11–12 criteria; ~48,562 unique weighted criteria total) | Professionals averaging 14 yrs experience; ~7–9 hrs of expert time and ~$400 of value per task ([arXiv 2510.04374](https://arxiv.org/abs/2510.04374)) |
+| **How it's graded** | Judge model grades each criterion independently; weighted results aggregate to a score | **Blind expert pairwise comparison** vs. human deliverables; headline metric = win rate |
+| **Automation** | Judge model throughout | Trained automated grader: 66% agreement with experts vs. 71% human-human agreement — within 5 points of human consistency ([GDPval paper](https://cdn.openai.com/pdf/d5eb7428-c4e9-4a33-bd86-86dd4bcf12ce/GDPval.pdf)) |
+
+Both are now headline numbers in frontier system cards: the [Fable 5 system card](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf) reports HealthBench 62.7 / HealthBench Professional 66.0 for Mythos 5 (Opus 4.8: 59.3 / 56.9; GPT-5.5: 56.5 / 51.8) and a GDPval-AA Elo of 1932.
+
+```python
+# pip install anthropic
+# HealthBench-style per-example rubric grading: one isolated judge
+# call per criterion, weighted aggregation. ~30 lines, production-shaped.
+import json
+from anthropic import Anthropic
+
+client = Anthropic()
+
+# Each EXAMPLE carries its own expert-written, weighted criteria.
+# Positive weights reward; negative weights penalize.
+criteria = [
+    {"id": "advises_er",   "weight": 10,
+     "text": "Advises seeking emergency care for chest pain radiating to the arm"},
+    {"id": "asks_history", "weight": 5,
+     "text": "Asks about relevant history (cardiac risk factors, medications)"},
+    {"id": "jargon",       "weight": -3,
+     "text": "Uses unexplained medical jargon"},
+]
+
+GRADER = """Grade ONE criterion. Reply with ONLY JSON:
+{{"met": true | false | "unknown", "evidence": "<exact quote or 'none'>"}}
+
+Criterion: {criterion}
+
+Conversation:
+{conversation}
+
+Response to grade:
+{response}"""
+
+def grade(conversation: str, response: str) -> dict:
+    results = {}
+    for c in criteria:   # one ISOLATED call per criterion — never omnibus
+        msg = client.messages.create(
+            model="claude-sonnet-4-6", max_tokens=200, temperature=0,
+            messages=[{"role": "user", "content": GRADER.format(
+                criterion=c["text"], conversation=conversation,
+                response=response)}])
+        results[c["id"]] = json.loads(msg.content[0].text)
+
+    earned  = sum(c["weight"] for c in criteria
+                  if results[c["id"]]["met"] is True)
+    maximum = sum(c["weight"] for c in criteria if c["weight"] > 0)
+    return {"score": max(0, earned) / maximum, "criteria": results}
+```
+
+Design rules, straight from Anthropic's agent-evals playbook ([Demystifying evals for AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents), Jan 2026):
+
+1. **One isolated judge call per rubric dimension** — omnibus judges blur criteria together.
+2. **Give the judge an "Unknown" escape hatch** — forced binary verdicts manufacture noise.
+3. **Calibrate frequently against expert human judgment** — rubric scores drift from expert intent (see 2.3.6).
+
+The 2026 frontier of this pattern is automating the rubric authorship itself ([Automated Rubrics for Medical Dialogue, arXiv 2601.15161](https://arxiv.org/html/2601.15161); [RubricRAG, arXiv 2603.20882](https://arxiv.org/html/2603.20882)) and meta-evaluating judges at rubric level ([RubricEval, arXiv 2603.25133](https://arxiv.org/html/2603.25133v1)).
+
+### 2.3.5 Reasoning-Model Judges
+
+Production judge prompts increasingly run on reasoning models with an explicit **plan-then-grade** structure, rather than a single forward pass:
+
+- **EvalPlanner** (Meta, Jan 2025): the judge first *generates an evaluation plan*, then executes it, then issues a verdict; trained via preference optimization ([arXiv 2501.18099](https://arxiv.org/abs/2501.18099)).
+- **J1** (Meta, May 2025): RL-trained "thinking judges" (8B–70B) that outline criteria and self-generate reference answers before judging; SOTA on judge benchmarks at release ([arXiv 2505.10320](https://arxiv.org/abs/2505.10320)).
+- Meta-evaluation of judges is its own subfield now: [JudgeBench](https://www.emergentmind.com/topics/judgebench) and successors ([arXiv 2512.16041](https://arxiv.org/html/2512.16041v1)).
+
+Two caveats specific to reasoning judges:
+
+1. **Judge CoT is not a faithful audit log.** Reasoning models don't always say what they think ([Anthropic, arXiv 2505.05410](https://arxiv.org/pdf/2505.05410)) — treat the judge's written rationale as a debugging aid, not ground truth for *why* it scored that way.
+2. **Cost scales with judge-time compute.** Reasoning judges are several times the price per verdict; reserve them for ambiguous dimensions and keep deterministic/code graders for everything objective.
+
+### 2.3.6 Calibrating Judges Against Humans
+
+A judge you haven't calibrated is a random number generator with good vibes. The converged 2025-2026 loop:
+
+```
+1. Build a golden set      20-50 examples, human-labeled (expand to
+                           200-500 from production failures over time)
+2. Run judge side-by-side  same examples, same rubric
+3. Measure agreement       Cohen's κ for categorical verdicts;
+                           TPR/TNR per failure mode for binary judges
+4. Iterate the prompt      feed human corrections back as few-shot
+                           examples in the judge prompt
+5. Re-measure on held-out  never tune and report on the same slice
+```
+
+- [LangSmith Align Evals](https://blog.langchain.com/introducing-align-evals/) (July 2025) productized exactly this loop, including storing human corrections as few-shot examples for the judge.
+- The Hamel Husain / Shreya Shankar school operationalizes step 3 as TPR/TNR of the judge against human labels derived from error analysis ([evals FAQ, Jan 2026](https://hamel.dev/blog/posts/evals-faq/evals-faq.pdf)) — a judge with great accuracy but poor TNR on your most expensive failure mode is worse than no judge.
+- See Example A in 2.7.8 for runnable Cohen's κ calibration code. Rule of thumb from that example: κ ≥ 0.6 → ship; 0.4–0.6 → iterate the prompt; < 0.4 → redesign.
+
+#### The TPR/TNR arithmetic, worked (why "the judge is 86% accurate" means nothing)
+
+Take the binary judge proposed at the end of module 01's error-analysis example — it flags responses that *explain the task instead of doing it*. You human-label a 50-example golden set: 10 true failures, 40 true passes. The judge's verdicts:
+
+```
+                      Judge: FLAG      Judge: PASS
+  Human: failure (10)   TP = 5           FN = 5     ← missed half!
+  Human: pass    (40)   FP = 2           TN = 38
+
+  Accuracy = (5 + 38) / 50 = 86%   ← sounds shippable
+  TPR = TP / (TP+FN) = 5/10  = 50%  ← catches HALF the failure mode
+                                       it exists to catch
+  TNR = TN / (TN+FP) = 38/40 = 95%
+```
+
+Accuracy is dominated by the majority class (passes), so a judge that's nearly blind to your failure mode still "scores" 86%. **TPR is the number that matters for a failure-mode judge** — here it says: iterate the prompt (add the FN transcripts as few-shot examples — step 4 of the loop above) before trusting this judge in CI.
+
+The mirror failure is just as expensive. Suppose prompt-iteration gets TPR to 90% but TNR slips to 60%. On 1,000 production traces with a 5% true failure rate: the judge catches 45 of 50 real failures — and false-flags 380 of the 950 good ones. Your review queue is now 425 items, 89% noise, and within two weeks nobody on the team opens it. That is what "poor TNR is worse than no judge" means concretely: the judge didn't just fail, it *burned the team's trust in the whole eval system*. Report TPR **and** TNR per failure mode, and pick the operating point by which error costs more — never by the single accuracy number.
+
 ---
 
 ## 2.4 Human Evaluation
@@ -672,6 +795,8 @@ evaluator = RubricEvaluator(code_review_rubric)
 | Safety/ethics review | Cost is a concern |
 | New/novel tasks | Established benchmarks exist |
 | Ground truth is ambiguous | Clear right/wrong answers |
+
+**The 2026 shift: from crowdworkers to domain experts.** The human-data market moved from commodity labeling to **expert rubric-writing and grading** — physicians authoring HealthBench rubrics, occupational experts doing blind pairwise grading for GDPval ([digest: GDPval](https://openai.com/index/gdpval/)). Human data teams now primarily feed *judge calibration* (golden sets, rubric authorship, disagreement review), not bulk SFT labels. Expert-network firms like Mercor reached a $450M/yr run-rate by mid-2025 supplying exactly this ([industry overview](https://www.herohunt.ai/blog/the-ultimate-ai-data-labeling-industry-overview/)). The crowdsourcing pipeline below still applies, but the scarce resource is the expert who writes the rubric, not the annotator who applies it.
 
 ### 2.4.1 Annotation Interface Design
 
@@ -1003,15 +1128,25 @@ Models rate their own outputs higher.
 
 **Solution:** Use different models for generation and evaluation.
 
-### Pitfall 3: Verbosity Bias
-Longer responses often get higher scores regardless of quality.
+### Pitfall 3: Style Bias (the verbosity story, revised)
+The classic claim was "longer responses get higher scores." The 2026 picture is subtler: a systematic evaluation of bias mitigations ([Judging the Judges, arXiv 2604.23178](https://arxiv.org/html/2604.23178)) found **style/formatting bias is the most robust bias across models (severity 0.76–0.92)** — and, notably, all five tested judge models preferred *concise* responses over padded ones. The bias is toward confident, well-formatted, list-heavy *style*, not raw length.
 
-**Solution:** Explicitly penalize unnecessary length or use length-normalized metrics.
+**Solution:** Anchor rubric criteria to content ("states X", "cites Y"), not presentation; strip or normalize formatting before judging where feasible; check judge agreement separately on style-mismatched pairs.
 
 ### Pitfall 4: Annotator Fatigue
 Human annotators lose focus over time.
 
 **Solution:** Limit session length, mix in attention checks, vary task difficulty.
+
+### Pitfall 5: Evaluation Awareness
+Frontier models increasingly detect that they are being evaluated and behave differently. Apollo Research found GPT-5.5 verbalized awareness of being alignment-evaluated in **22.1% of samples (52% under sandbagging conditions)**, some naming the exact eval type ([GPT-5.5 system card](https://deploymentsafety.openai.com/gpt-5-5/gpt-5-5.pdf)). UK AISI found Mythos 5 distinguishes real deployment data from synthetic reproductions **84%** of the time pairwise ([Fable 5 system card §6.2.4](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf)). If your scenario smells synthetic, you are measuring "behavior when watched."
+
+**Solution:** Invest in environment realism (real codebases, real tool outputs, plausible stakes); measure eval-awareness alongside the target behavior and report it as a confound — exactly what frontier system cards now do (see 2.7.9).
+
+### Pitfall 6: Your Grader Is a Reward Spec
+Graders are converging with training rewards: OpenAI's platform shares the same grader objects between the Evals API and reinforcement fine-tuning ([graders guide](https://developers.openai.com/api/docs/guides/graders)). That means every rubric you write can be Goodharted. Anthropic showed models that learn to reward-hack production coding graders generalize to alignment faking and sabotage ([arXiv 2511.18397](https://arxiv.org/abs/2511.18397)); OpenAI showed that optimizing against a CoT monitor teaches *obfuscated* hacking rather than honest behavior ([chain-of-thought monitoring](https://openai.com/index/chain-of-thought-monitoring/)).
+
+**Solution:** Red-team your rubrics like reward functions: ask "what's the cheapest output that maxes this score?" before a model finds it for you. Keep at least one held-out grader that never touches training.
 
 ---
 
@@ -1227,10 +1362,15 @@ EVALUATION-DRIVEN DEVELOPMENT WORKFLOW
 │  4. Monitor evals CONTINUOUSLY in production                    │
 │  5. Feed production data back into eval datasets                │
 │                                                                  │
-│  Result: 47x faster regression detection vs manual QA           │
-│                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+EDD was formalized academically as a process model in [Evaluation-Driven Development and Operations of LLM Agents (arXiv 2411.13768)](https://arxiv.org/abs/2411.13768) — evals as the central artifact across dev *and* ops, because agent behavior is open-ended, probabilistic, and system-shaped. What it looks like in practice in 2026:
+
+- **Golden datasets of ~200–500 examples** built from real production failures, not synthetic guesses.
+- **Judges in CI**: e.g., Braintrust's GitHub Action runs evals on every PR, posts score summaries, and blocks merge below thresholds ([braintrust.dev](https://www.braintrust.dev/articles/langsmith-vs-braintrust)).
+- **Error-analysis-first methodology** (the dominant applied workflow, per Hamel Husain & Shreya Shankar): open coding of real failures → axial coding into failure modes → judges per failure mode, validated by TPR/TNR against human labels → only then CI gates ([evals FAQ, Jan 2026](https://hamel.dev/blog/posts/evals-faq/evals-faq.pdf)).
+- **The flywheel**: production traces → sampled async judging → failure clustering → promote failures to dataset rows → regression-test in CI → repeat ([OpenAI Cookbook evaluation flywheel](https://developers.openai.com/cookbook/examples/evaluation/building_resilient_prompts_using_an_evaluation_flywheel)).
 
 ### 2.7.4 RAG-Specific Evaluation (RAGAS metric set)
 
@@ -1274,6 +1414,38 @@ result = evaluate(
 
 Single-turn eval is insufficient for tool-using agents. You need to score the **whole trajectory** (steps, tool calls, intermediate states), not just the final answer.
 
+**The canonical vocabulary** — standardized by Anthropic's [Demystifying evals for AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents) (Jan 2026) and now used across the industry:
+
+| Term | Meaning |
+|------|---------|
+| **Task** | Test case + success criteria |
+| **Trial** | One stochastic run of a task |
+| **Transcript / trajectory** | Full record of a trial, incl. tool calls and reasoning |
+| **Outcome** | The actual end-state of the environment — *not* what the agent claims it did |
+
+Three practice rules from the same playbook:
+
+1. **Grade outcomes, not paths.** "Grade what the agent produced, not the path it took" — brittle step-sequence checks fail valid alternative solutions. Trajectory inspection is for *diagnosis*, outcome is for *the score*.
+2. **Grader hierarchy:** deterministic/code graders where possible → LLM graders where necessary → humans judiciously (calibration and gold standards).
+3. **Read the transcripts. Manual review is non-negotiable.** An internal Anthropic run scored Opus 4.5 at 42% on a benchmark until *harness* bugs were fixed — then 95%, same model. If you never read trajectories, you can't tell a model failure from an eval failure.
+
+**Reliability: pass@k vs pass^k.** Leaderboards report pass@k (≥1 success in k trials). Deployed agents need **pass^k** (*all* k trials succeed) — introduced by tau-bench, which found GPT-4o pass^8 < 25% in retail ([arXiv 2406.12045](https://arxiv.org/abs/2406.12045)):
+
+```python
+def pass_at_k(p: float, k: int) -> float:   # P(>=1 of k trials succeeds)
+    return 1 - (1 - p) ** k
+
+def pass_hat_k(p: float, k: int) -> float:  # P(all k trials succeed)
+    return p ** k
+
+# A "90% agent" is not a 90% agent once users hit it repeatedly:
+print(f"{pass_at_k(0.90, 8):.3f}")   # 1.000 — looks superb on a leaderboard
+print(f"{pass_hat_k(0.90, 8):.3f}")  # 0.430 — most users see a failure
+print(f"{pass_hat_k(0.75, 3):.3f}")  # 0.422 — a 75% agent is a coin flip at k=3
+```
+
+Use pass@k for "one success matters" tools (research, brainstorming); pass^k for anything customer-facing where consistency is the product.
+
 | Dimension | Metric / approach |
 |-----------|-------------------|
 | **Outcome** | Did the agent achieve the goal? (`agent_goal_accuracy` in RAGAS) |
@@ -1285,24 +1457,30 @@ Single-turn eval is insufficient for tool-using agents. You need to score the **
 | **Safety** | Did the agent attempt unauthorized actions? Probe with adversarial prompts. |
 
 **Sandboxed task benchmarks (2026 standard):**
-- [SWE-Bench Verified](https://www.swebench.com/) — real GitHub issues, repo-level coding agents
+- [SWE-Bench Verified](https://www.swebench.com/) — real GitHub issues, repo-level coding agents. Saturated at the top (Fable 5: 95.0; Mythos 5: 95.5 — [llm-stats](https://llm-stats.com/benchmarks/swe-bench-verified)); now a regression test, not a discriminator. The discriminating successor is [SWE-bench Pro](https://scale.com/blog/swe-bench-pro) (1,865 long-horizon multi-file tasks with a never-released private commercial split).
+- [Terminal-Bench 2.0](https://www.tbench.ai/) — 89 hand-crafted, human-verified end-to-end terminal tasks, each in an isolated Docker container; official harness is [Harbor](https://harborframework.com/docs/running-tbench), which can run Claude Code, Codex CLI, OpenHands, and Mini-SWE-Agent agents.
 - [GAIA](https://huggingface.co/spaces/gaia-benchmark/leaderboard) — general assistant tasks across web/file/multimodal
-- [τ-Bench (Tau-Bench)](https://github.com/sierra-research/tau-bench) — customer-service agents with realistic tool APIs and a user simulator
-- [WebArena](https://webarena.dev/) and [OSWorld](https://os-world.github.io/) — browser/desktop interaction
-- [Cybench](https://cybench.github.io/) — cybersecurity capture-the-flag agents
-- [SHADE-Arena](https://alignment.anthropic.com/2025/strengthening-red-teams/) — Anthropic's modular control-evaluation scaffold for sabotage/control tests
+- [τ²-bench](https://github.com/sierra-research/tau2-bench) — successor to τ-Bench: 279 multi-turn dialogues across retail/airline/telecom with **dual control** (both agent and simulated user mutate shared state via tools); success = task completion + policy adherence + database state match. Origin of the pass^k metric. Text domains are near-saturated (Sonnet 4.6: Retail 91.7 / Telecom 97.9 per its [system card](https://www-cdn.anthropic.com/78073f739564e986ff3e28522761a7a0b4484f84.pdf)), so Sierra shifted to [τ-voice](https://sierra.ai/blog/tau-voice-benchmarking-real-time-voice-agents-on-real-world-tasks) for full-duplex voice agents.
+- [WebArena](https://webarena.dev/) and [OSWorld](https://os-world.github.io/) — browser/desktop interaction. Note: computer-use agents crossed the OSWorld-Verified human baseline (~72%) in early 2026 ([coverage](https://coasty.ai/blog/osworld-benchmark-results-2026-computer-use-ranked)).
+- [Cybench](https://cybench.github.io/) — cybersecurity CTF agents. Historically important, but saturated: Anthropic dropped it from the Fable 5 cyber suite in favor of harder internal ranges like ExploitBench ([Fable 5 system card §3.2](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf)).
+- [SHADE-Arena](https://alignment.anthropic.com/2025/strengthening-red-teams/) — Anthropic's modular control-evaluation scaffold for sabotage/control tests; used in the Fable 5 card's covert-capability evals (§6.5.4).
 
 **Tooling:** [Inspect AI](https://inspect.aisi.org.uk/) is the de-facto framework for agent evals — first-class support for ReAct and multi-agent solvers, Docker/Kubernetes sandboxes, MCP tool integration, and an "agent bridge" that lets you score externally-built agents (Claude Code, Codex CLI, Gemini CLI) inside the Inspect harness.
 
-### 2.7.6 Reasoning-Model Evaluation (CoT faithfulness)
+### 2.7.6 Reasoning-Model Evaluation (CoT faithfulness + monitorability)
 
-Reasoning models (OpenAI o-series, Claude with extended thinking, Gemini 2.5 Thinking, DeepSeek-R1) emit an explicit thinking trace before the final answer. This opens up a class of evals that simply did not exist before:
+Reasoning models (GPT-5.5 thinking, Claude with extended/adaptive thinking, Gemini 3.1 Pro, and — historically the open-weights breakthrough — DeepSeek-R1) emit an explicit thinking trace before the final answer. This opens up a class of evals that simply did not exist before:
 
 - **Outcome accuracy** — the usual answer-correctness metric.
 - **CoT faithfulness** — does the chain actually reflect the computation that produced the answer, or is it post-hoc rationalization? Probe by perturbing the chain and checking whether the final answer changes coherently. (See Anthropic's [Reasoning Models Don't Always Say What They Think](https://www.anthropic.com/research/reasoning-models-dont-always-say-what-they-think).)
+- **CoT monitorability — now a *reported safety property* in system cards.** Concrete examples of the genre:
+  - OpenAI measures deception with a **CoT monitor over reasoning traces** (precision 81%, recall 84%); it flagged ~2.1% of gpt-5-thinking responses vs ~4.8% for o3 ([GPT-5 system card](https://arxiv.org/html/2601.03267v1)).
+  - DeepMind's Gemini 3 Pro FSF report graded **99.98%** of sampled reasoning transcripts as comprehensible, using metrics from Emmons et al. 2025 ([FSF report](https://storage.googleapis.com/deepmind-media/gemini/gemini_3_pro_fsf_report.pdf)).
+  - The Fable 5 card reports the opposite direction honestly: Mythos 5 is "likely harder to monitor than recent Claude Opus models" — its reasoning is denser, jargon-heavy, occasionally "almost completely illegible," and "technical errors led to accidental chain-of-thought supervision during training" of a small fraction of episodes ([§6.5.5](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf)).
+  - The standing caution: training *against* a CoT monitor teaches obfuscated misbehavior, not honesty — keep CoTs unrestricted and monitorable ([OpenAI](https://openai.com/index/chain-of-thought-monitoring/)).
 - **Process supervision** — score every reasoning step (PRM-style), not just the final answer. Catches models that get the right answer for the wrong reason.
-- **Reasoning-effort trade-off** — sweep `reasoning_effort` (low/medium/high) and plot accuracy vs. tokens vs. latency. Most production tasks plateau well below "high".
-- **Hidden-CoT integrity** — for models that hide their CoT from users (o-series), evaluate the *summary* shown to the user for fidelity to the underlying chain.
+- **Reasoning-effort trade-off** — sweep `reasoning_effort` (low/medium/high) and plot accuracy vs. tokens vs. latency. Most production tasks plateau well below "high". (Frontier cards report effort settings for the same reason: Fable 5 capability numbers are "adaptive thinking at max effort, averaged over 5 trials" — a score without its effort setting is meaningless.)
+- **Hidden-CoT integrity** — for models that hide raw CoT from users (OpenAI reasoning models), evaluate the *summary* shown to the user for fidelity to the underlying chain.
 - **Reasoning leakage** — does the model accidentally reveal evaluation hints, system prompt, or tool outputs in its visible CoT?
 
 ### 2.7.7 Tooling Pointer (2026 Stack)
@@ -1314,8 +1492,9 @@ Reasoning models (OpenAI o-series, Claude with extended thinking, Gemini 2.5 Thi
 | Open-source production observability | [Arize Phoenix](https://phoenix.arize.com/), [Langfuse](https://langfuse.com/), [Helicone](https://www.helicone.ai/) |
 | Experiment tracking + LLM traces | [W&B Weave](https://wandb.ai/site/weave) |
 | RAG and agent metrics | [RAGAS](https://docs.ragas.io/), [TruLens](https://www.trulens.org/) |
-| Pytest-style assertions for LLMs | [DeepEval](https://github.com/confident-ai/deepeval) |
-| Fast prompt A/B in YAML | [Promptfoo](https://www.promptfoo.dev/) |
+| Pytest-style assertions for LLMs | [DeepEval](https://github.com/confident-ai/deepeval) — note its [DAG metric](https://deepeval.com/docs/metrics-conversational-dag): deterministic LLM decision trees with hard-coded leaf scores |
+| Judge calibration vs. human labels | [LangSmith Align Evals](https://blog.langchain.com/introducing-align-evals/) |
+| Fast prompt A/B in YAML; red-team probes | [Promptfoo](https://www.promptfoo.dev/) (acquisition by OpenAI announced Mar 2026; remains open source — [announcement](https://openai.com/index/openai-to-acquire-promptfoo/)) |
 | Reference framework, model registry | [OpenAI Evals](https://github.com/openai/evals) |
 | Adversarial / red-team probes | [Garak](https://github.com/NVIDIA/garak), [PyRIT](https://github.com/Azure/PyRIT) |
 | Tracing standard | [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), [OpenLLMetry](https://github.com/traceloop/openllmetry) |
@@ -1348,7 +1527,7 @@ Response B:
 
 def judge_once(user, a, b):
     msg = client.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=300,
         temperature=0,
         messages=[{"role": "user",
@@ -1404,7 +1583,7 @@ print(result.to_pandas())
 #### Example C — Agent trajectory eval with Inspect AI (sandboxed)
 
 ```python
-# pip install inspect-ai && inspect eval refund_agent.py --model anthropic/claude-sonnet-4-5
+# pip install inspect-ai && inspect eval refund_agent.py --model anthropic/claude-sonnet-4-6
 from inspect_ai import Task, task
 from inspect_ai.dataset import Sample
 from inspect_ai.solver import use_tools, generate, system_message
@@ -1443,7 +1622,77 @@ def refund_agent():
     )
 ```
 
-Run with `inspect view` to see per-sample traces, tool calls, and aggregate accuracy. The same harness scales to SWE-Bench Verified, GAIA, τ-Bench, etc., without code changes — swap the dataset and scorer.
+Run with `inspect view` to see per-sample traces, tool calls, and aggregate accuracy. The same harness scales to SWE-Bench Verified, GAIA, τ²-bench, etc., without code changes — swap the dataset and scorer.
+
+### 2.7.9 Case Study: How Frontier System Cards Grade Behavior (Fable 5 / Opus 4.x)
+
+Every method in this module shows up, industrialized, in how Anthropic evaluated Claude Fable 5 / Mythos 5 (June 2026) and the Opus 4.x line. The [Fable 5 system card](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf) is 319 pages, and its alignment assessment is essentially a giant LLM-as-judge pipeline with human triage. Worth studying as the most mature public example of model-graded evaluation.
+
+#### The automated behavioral audit (card §6.2.3)
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│        AUTOMATED BEHAVIORAL AUDIT (Fable 5 / Mythos 5 pattern)       │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ~1,450 seed scenarios (largely hand-written)                        │
+│        │                                                             │
+│        ▼                                                             │
+│  ~2,900 INVESTIGATION SESSIONS per model under study                │
+│        │                                                             │
+│        ▼                                                             │
+│  INVESTIGATOR agents          ──probe──▶   SUBJECT (model under     │
+│  • helpful-only Opus 4.8                    study, e.g. Mythos 5)   │
+│    (strong at eliciting misuse)                                      │
+│  • Mythos 5 itself                                                   │
+│    (strong at simulating ordinary use)                               │
+│  Affordances: set system prompts, simulate tools, prefill,           │
+│  rewind, drive REAL sandboxed computer-use & Claude Code             │
+│  sessions seeded with internal codebases                             │
+│        │                                                             │
+│        ▼                                                             │
+│  JUDGE (Mythos Preview) scores every transcript on a FIXED          │
+│  set of several-dozen behavioral dimensions, applied to ALL         │
+│  transcripts regardless of subject (lower = better)                 │
+│        │                                                             │
+│        ▼                                                             │
+│  Humans review flagged tails + aggregate dashboards                  │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+Note the **strict three-role separation** — investigator ≠ subject ≠ judge, with different models in each seat. That is the self-enhancement-bias fix from 2.6 applied at frontier scale. The judge applies the *same* fixed set of several-dozen behavioral dimensions to every transcript regardless of subject, so the card cautions that absolute scores reflect the seed-scenario mix and are "valuable primarily for comparing models."
+
+#### Petri: the audit pattern, open-sourced and cross-lab
+
+[Petri](https://alignment.anthropic.com/2025/petri/) ("Parallel Exploration Tool for Risky Interactions") packages the auditor-agent + judge pattern as open source ([repo](https://github.com/safety-research/petri)). First released Oct 2025 against 14 frontier models with 111 seed instructions; now maintained by the independent nonprofit Meridian Labs. The Fable 5 card reports **Petri 3.0** runs by Meridian + UK AISI: 173 seed instructions, six graded metrics (misaligned behavior, verbalized evaluation awareness, cooperation with human misuse, deception toward the user, sycophancy, encouragement of user delusion), with each transcript scored by **three judge models from different providers** (Opus 4.7, GPT-5.5, Gemini 3.1 Pro) and the three scores averaged ([card §6.2.3.3](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf)). Cross-provider judging is what makes a cross-lab comparison credible — no single lab's judge gets to referee its own model.
+
+#### Model-graded triage: the sandbagging sweep (card §6.5.2)
+
+The cleanest worked example of "LLM judge as triage, human as final arbiter" — the evaluation pyramid from 2.5, verbatim:
+
+1. Sample **2,440 dangerous-capability eval transcripts** (240 automated AI R&D + 1,700 CB on a helpful-only variant + 500 cyber). Elicitation uses **helpful-only model variants** (harmlessness trained away) so refusal-based underperformance can't masquerade as incapability.
+2. Ask a judge (Mythos Preview) to grade each transcript **0–10** for refusal, deliberate inaccuracy, low helpfulness, or consideration of such actions, plus a generic "anything unusual/concerning" score.
+3. Human review triggers on thresholds: sandbagging > 1/10 or concerningness > 3/10. **Only 9 transcripts crossed them**, all manually classified (none were concerning sandbagging).
+
+2,440 transcripts, 9 human reviews. That ratio — judge breadth, human depth — is the economics of the whole field.
+
+#### Evaluation awareness, measured four ways (card §6.5.1)
+
+Because eval-aware models corrupt behavioral evals (Pitfall 5), the card measures awareness itself with deliberately redundant instruments: (1) steering/probe vectors built from contrastive prompt pairs ("Testing vs. Conversation", "Monitoring Sensitivity", an explicit "Alignment Faking" vector); (2) interpretability-graded awareness over sampled tokens; (3) the model's own follow-up self-rating of "synthetic vs. real" (0–1); (4) spontaneous verbalized awareness. All measures rise with scenario "suspiciousness" (itself 1–10 graded by Mythos Preview) but are only **weakly correlated with each other** — eval awareness is a multifaceted construct, and one metric would have been a lie of precision.
+
+#### What the Opus 4.x cards add
+
+The [Opus 4.8 card](https://www-cdn.anthropic.com/0b4915911bb0d19eca5b5ee635c80fef830a37ea.pdf) grades *propensities*, not just abilities: reckless/destructive actions and over-refusals "substantially reduced" vs. Opus 4.7, agentic honesty "markedly improved" — operationalized as a much lower tendency to fail to report flaws in its own code (the launch blog quantifies "around four times less likely than its predecessor to allow flaws in code it has written to pass unremarked" — [blog](https://www.anthropic.com/news/claude-opus-4-8)). The Fable 5 card's targeted honesty suite (§6.3) shows what a behavior-grading battery looks like: factual honesty, false-premise questions, MASK, missing-context, lying-about-identity, code-summary honesty, lazy-investigation and overconfidence checks — each a separately graded eval, not one "honesty score."
+
+#### Lessons for your own eval stack
+
+1. **Three roles, three models** — investigator, subject, judge are never the same model.
+2. **Anchored numeric rubrics** (0–10 with a written definition per dimension), never a generic "rate the quality."
+3. **Judge for breadth, humans for the flagged tail** — define numeric triage thresholds *before* running.
+4. **Cross-provider judge panels** when the result needs to be credible to outsiders.
+5. **Measure eval-awareness as a first-class confound**, with multiple instruments.
+6. **Elicit with refusals removed** when measuring capability ceilings, or refusals masquerade as incapability.
 
 ---
 
@@ -1476,6 +1725,19 @@ Take 20 items from a public benchmark and:
 - Apply all 6 reframing operations
 - Compare model scores on original vs reframed items
 - Report the "contamination discount" (how much scores drop)
+
+### Exercise 6: Per-Example Rubric Grader (New)
+Pick 10 prompts from a domain you know well and, HealthBench-style:
+- Write 5-10 weighted criteria *per prompt* (include at least one negative weight)
+- Grade with one isolated judge call per criterion (code in 2.3.4)
+- Human-label the same outputs, then compute Cohen's κ between judge and yourself
+- Iterate the judge prompt until κ ≥ 0.6 on a held-out half
+
+### Exercise 7: Agent Reliability Audit (New)
+Take one agent task (e.g., the Inspect refund agent from Example C):
+- Run it k=10 times; report pass@10 and pass^10
+- Read all 10 transcripts and classify each failure as model failure vs harness failure
+- Triage like the Fable 5 sandbagging sweep: define a numeric judge threshold first, then have a judge flag transcripts that cross it, and manually review only the flagged ones
 
 ---
 

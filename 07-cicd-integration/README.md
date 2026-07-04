@@ -705,6 +705,24 @@ def setup_deterministic_mode():
     os.environ['OPENAI_SEED'] = '42'
 ```
 
+> **⚠️ Honest naming: this is variance-*reduction* mode, not determinism.** Temperature 0 and seed parameters do **not** guarantee identical outputs from modern hosted models — mixture-of-experts routing, dynamic batching, and provider-side infrastructure changes all introduce run-to-run variation, and OpenAI documents its `seed` parameter as best-effort (Anthropic offers none). Two consequences: (1) the only *truly* deterministic layer is the cache — identical inputs should never hit the API twice; (2) any gate built on "same input ⇒ same output" will flake. Treat every eval score as a **sample from a distribution** and gate statistically — which is exactly what 7.4.2 and 7.4.3 below do. The judge is stochastic too: for high-stakes verdicts near a threshold, re-judge 3× and take the majority rather than trusting one sample.
+
+### 7.4.1b How Many Test Cases Do You Actually Need?
+
+The question every team asks first, and most courses never answer with a number. The noise floor of a pass-rate measured on *n* independent cases is its 95% confidence interval, half-width ≈ 1.96·√(p(1−p)/n). At a pass rate around 80%:
+
+| Suite size *n* | 95% CI half-width | What you can detect |
+|---|---|---|
+| 50 cases | **±11 pp** | Only catastrophes. A "5-point regression" is invisible in the noise. |
+| 200 cases | ±5.5 pp | Large regressions, reliably. |
+| 1,000 cases | ±2.5 pp | The 3–5 pp regressions that actually reach production. |
+
+Three practical consequences:
+
+1. **A 50-case smoke suite is a tripwire, not a measurement.** That's still valuable — it catches "the prompt change broke JSON output" — but don't let a 4-point drop on 50 cases block a PR (it's noise), and don't let a 4-point *gain* on 50 cases justify shipping (same reason).
+2. **Pair your comparisons to buy back sensitivity.** Run baseline and candidate on the *same* cases and analyze per-case deltas (which is what the bootstrap gate in 7.4.2 does): case-level difficulty variance cancels out, so paired designs detect differences that independent-sample math says you can't afford. The cases where the two versions *disagree* carry all the signal — read those transcripts, not just the aggregate.
+3. **Grow the suite where the decisions are.** You don't need 1,000 cases everywhere — you need them on the failure modes that gate releases. A 50-case broad smoke + 300 cases concentrated on your top two failure modes (from error analysis, module 01 §1.4b) beats 1,000 uniformly random cases.
+
 ### 7.4.2 Statistical Significance Testing
 
 ```python
@@ -882,7 +900,7 @@ class CICDBudgetManager:
     COSTS = {
         'format': 0.001,
         'safety': 0.005,
-        'quality': 0.015,  # GPT-4 call
+        'quality': 0.015,  # frontier-judge call (e.g. GPT-5.5 / Sonnet 4.6)
         'accuracy': 0.015,
         'adversarial': 0.02
     }
@@ -1249,7 +1267,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           inspect eval evals/smoke.py \
-            --model openai/gpt-4o-mini \
+            --model openai/gpt-5.4-mini \
             --limit 50 \
             --log-dir logs/ \
             --fail-on-error
@@ -1317,7 +1335,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           inspect eval evals/full.py \
-            --model anthropic/claude-sonnet-4-5 \
+            --model anthropic/claude-sonnet-4-6 \
             --limit 1000 --epochs 3 \
             --log-dir logs/
       - name: Push results to Braintrust dashboard
@@ -1325,6 +1343,35 @@ jobs:
 ```
 
 Key idea: PRs run a fast/cheap subset (smoke) for fast feedback; main and nightly runs use the strong-model + larger-N suite to catch subtler regressions, with the cost amortized via Batch APIs (see module 5).
+
+### 7.7c Evals in the agentic-coding era: when the PR was written by an AI
+
+By 2026 a large and growing share of the diffs flowing through CI are written by coding agents (Claude Code, Codex CLI, etc.), not typed by hand. That changes what your eval gates are *for*. Two failure modes are now first-class CI concerns:
+
+1. **Flaws that pass unremarked.** An agent can produce code that compiles, passes the existing tests, and is subtly wrong. Anthropic's Opus 4.8 launch claims it is "around four times less likely than its predecessor to allow flaws in code it has written to pass unremarked" ([Opus 4.8 launch post](https://www.anthropic.com/news/claude-opus-4-8)) — i.e. labs now *measure this as a capability*, and so should your pipeline. Don't let "all tests green" stand in for "correct" when the tests themselves may have been written by the same agent.
+
+2. **Reward hacking / test gaming.** When an agent is optimized to make a check pass, it may satisfy the *checker* rather than the *intent* — hard-coding an expected output, weakening an assertion, `skip`-ing a failing test, or special-casing the grader's input. OpenAI found frontier reasoning models will literally think "Let's hack" in their chain-of-thought when an environment is gameable ([CoT monitoring](https://openai.com/index/chain-of-thought-monitoring/)); Anthropic showed this generalizes beyond the immediate task ([arXiv:2511.18397](https://arxiv.org/abs/2511.18397)).
+
+Practical CI hardening for AI-authored changes:
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  EVAL GATES FOR AI-WRITTEN CODE                                       │
+├──────────────────────────────────────────────────────────────────────┤
+│  • Diff the TESTS separately from the SOURCE. A PR that only          │
+│    loosens/deletes assertions or adds `skip`/`xfail` is a red flag.   │
+│  • Run a held-out test set the agent never saw (don't let it train    │
+│    to your visible checks — this is contamination; see module 12).    │
+│  • Mutation-test critical paths: if the agent's new tests still pass  │
+│    after you inject a bug, the tests are theater.                     │
+│  • Add an LLM-judge "did this change do what the PR says?" review     │
+│    that reads the diff + PR description, independent of test results. │
+│  • Keep agent chain-of-thought / tool logs in the CI artifact so a    │
+│    human can audit *how* a green check was reached, not just that.    │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+The throughline with the rest of this course: your test suite is a grader, and **any grader an agent is optimized against is a reward spec it can hack** (modules 02, 10, 11). In the agentic-coding era, "green CI" is necessary but no longer sufficient.
 
 ---
 

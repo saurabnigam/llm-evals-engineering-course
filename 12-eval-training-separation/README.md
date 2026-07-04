@@ -49,17 +49,20 @@ THE FUNDAMENTAL PROBLEM
 ```
 ANTHROPIC'S EVAL INTEGRITY APPROACH
 
-Layer 1: KNOWLEDGE CUTOFF DATES
-  ├── Each model has a clear temporal boundary
-  │   • Opus 4.6: May 2025
-  │   • Opus/Sonnet 4: March 2025
-  │   • Sonnet 3.7: October 2024
-  ├── Evals created AFTER the cutoff cannot have been seen
+Layer 1: TEMPORAL GATING (training-data collection windows)
+  ├── Each model has a training-data collection window; evals
+  │   created AFTER it closes cannot have been seen
+  ├── Current system cards use this explicitly: the Fable 5 /
+  │   Mythos 5 card reports USAMO 2026 (held March 21-22, 2026)
+  │   because it took place "after almost all of Mythos's training
+  │   data was collected, and we are confident that there was
+  │   no contamination"
   └── But this only helps for time-gated evals
 
 Layer 2: USER DATA EXCLUSION
-  ├── "Claude models have NOT been trained on any user prompt
-  │    or output data" from deployments
+  ├── API/commercial customer data is excluded from training
+  │   by default (earlier cards stated this absolutely; verify
+  │   the current data policy for your tier before relying on it)
   ├── This prevents eval data sent via API from leaking back
   └── Critical for customers running proprietary evals
 
@@ -71,14 +74,29 @@ Layer 3: DATA DECONTAMINATION
 
 Layer 4: SEMI-PRIVATE & PRIVATE TEST SETS
   ├── Maintain held-out test sets not published online
-  ├── Use third-party evaluation services (METR, etc.)
-  └── Internal evals never published in training data
+  ├── Report on third-party private holdouts (the Fable 5 card
+  │   cites Harvey's held-out Legal Agent set and Zapier's
+  │   private AutomationBench set — see Section 12.7)
+  └── Named external testers in the 2026 cards: METR, UK AISI,
+      Meridian Labs (Petri), Gray Swan, Andon Labs
 
 Layer 5: WEB CRAWLER TRANSPARENCY
-  ├── Anthropic operates its own web crawler
+  ├── Anthropic operates a named crawler (ClaudeBot)
   ├── Follows robots.txt (site operators can opt out)
   └── Enables tracking which sources are in training data
+
+Layer 6: ELICITATION HONESTY (explicit in the 2026 cards)
+  ├── Capability evals run on the UNSAFEGUARDED config
+  │   (Mythos 5) so safeguards can't mask true capability;
+  │   safeguard evals run on the shipped config (Fable 5)
+  ├── "Helpful-only" model variants used for dangerous-
+  │   capability elicitation (harmlessness trained away)
+  └── Sandbagging sweep: 2,440 dangerous-capability transcripts
+      model-graded for deliberate under-performance; "we do not
+      see any concerning instances of sandbagging behavior"
 ```
+
+Sources: [Fable 5 / Mythos 5 system card](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf) §1.1 (training data, ClaudeBot), §1.4 (which config is evaluated), §6.5.2 (sandbagging sweep), §8.10 (USAMO 2026 temporal gating), §§8.17.4/8.17.9 (third-party holdouts); external-tester roster per card §§2.3.8, 3.2.5, 6.2.3.3, 6.2.5.
 
 ### What Anthropic Does NOT Disclose
 
@@ -147,6 +165,29 @@ contamination_types = {
         "detection": "DCR framework (semantic, informational, data, label levels)",
         "example": "Answer key to a benchmark found in training corpus",
         "impact": "Model can retrieve answers without reasoning"
+    },
+
+    # --- Two types that only became visible in 2025-2026 ---
+
+    "preference_leaderboard_contamination": {
+        "description": "Vendor tunes/selects variants against a preference leaderboard's distribution",
+        "severity": "high",
+        "detection": "Compare leaderboard rank of submitted variant vs released weights",
+        "example": "Llama 4: a chat-optimized variant hit Elo 1417 (#2) on LMArena; "
+                   "the released weights ranked ~32nd. 'The Leaderboard Illusion' "
+                   "(arXiv:2504.20879) showed Meta privately tested 27 Llama-4 variants, "
+                   "and Arena-style finetuning can inflate ArenaHard >100% while DEGRADING MMLU",
+        "impact": "Leaderboard rank reflects leaderboard-fitting, not capability"
+    },
+
+    "agentic_harness_memorization": {
+        "description": "Agent memorized the benchmark's repos/environments, not the skill",
+        "severity": "critical",
+        "detection": "Re-run on structurally identical tasks from repos OUTSIDE the benchmark",
+        "example": "'The SWE-Bench Illusion' (arXiv:2506.12286): SOTA models emit the correct "
+                   "buggy-file PATH from the issue text alone for SWE-bench repos; performance "
+                   "drops to <=53% of baseline on tasks from non-benchmark repos",
+        "impact": "Agentic scores overstate generalization; repo identity is the leaked label"
     }
 }
 ```
@@ -190,6 +231,21 @@ contamination-aware performance.
 
 Adjusted_Score = Raw_Score * (1 - DCR_Factor)
 ```
+
+### What 2025-2026 Contamination Studies Actually Found
+
+Detection methods stopped being hypothetical — these are the field results you should know cold:
+
+| Finding | What it showed | Source |
+|---|---|---|
+| **The SWE-Bench Illusion** (v4, Dec 2025) | SOTA models can name the buggy file from the issue text *alone* on SWE-bench repos; performance drops to ≤53% of baseline on tasks from repos outside the benchmark. Strong memorization evidence on the field's flagship coding eval | [arXiv:2506.12286](https://arxiv.org/abs/2506.12286); follow-up [arXiv:2512.10218](https://arxiv.org/pdf/2512.10218) |
+| **Private-set deltas** (Balunović et al. 2025) | Models score substantially lower on MathArena's *unpublished* competition problems than on public math benchmarks of comparable difficulty | via [arXiv:2601.19334](https://arxiv.org/html/2601.19334v1) |
+| **Training-set inclusion** | GSM8K and MATH found in the training data of 31 modern models (Xu et al. 2024); MMLU and HellaSwag contamination rates quantified by Hidayat et al. 2025 | via [arXiv:2601.19334](https://arxiv.org/html/2601.19334v1) |
+| **Zero-leakage natural experiment** | 2026 Korean CSAT math exam administered to LLMs *hours* after release — a clean post-cutoff capability reading | [arXiv:2511.18649](https://arxiv.org/pdf/2511.18649) |
+| **FrontierMath conflict of interest** (Jan 2025) | OpenAI funded the benchmark and had access to most problems + solutions; contributors weren't told; o3's headline 25% was on a benchmark its maker partly owned. Epoch kept a holdout set and apologized | [TechCrunch](https://techcrunch.com/2025/01/19/ai-benchmarking-organization-criticized-for-waiting-to-disclose-funding-from-openai/) |
+| **ARC overfitting concern** | ARC Prize itself flagged that "ARC data is well represented" in frontier training corpora — even abstract-reasoning grids leak | [ARC Prize 2025 results](https://arcprize.org/blog/arc-prize-2025-results-analysis) |
+
+Two practitioner lessons: (1) **repo/source identity is itself a leaked label** for agentic benchmarks — decontamination must consider the environment, not just the question text; (2) **benchmark governance is part of the threat model** — who funds, owns, and has access to a benchmark determines how much you trust scores on it. Ongoing catalog of the literature: [awesome-data-contamination](https://github.com/lyy1994/awesome-data-contamination).
 
 ### Implementing Contamination Detection
 
@@ -462,19 +518,40 @@ Return as JSON list: [{{"question": "...", "answer": "...", "reasoning": "...",
 ```
 BENCHMARK SATURATION TIMELINE
 
+THE LEGACY TIER (saturated ~2024, contaminated, no longer
+reported in any 2026 model card):
+
 MMLU (2021):
-  GPT-3:          43.9%
-  GPT-4 (2023):   86.4%
-  Claude 3.5:     88.7%
-  GPT-4o (2024):  88.7%
+  GPT-3:            43.9%
+  GPT-4 (2023):     86.4%
+  All 2026 frontier models: 88-94%+
   ← SATURATED: Models cluster at top, can't differentiate
 
 HumanEval (2021):
-  Codex (2021):   28.8%
-  GPT-4 (2023):   67.0%
-  Claude 3.5:     92.0%
-  Claude Opus 4:  ~95%+
-  ← SATURATED: Near-ceiling performance
+  Codex (2021):     28.8%
+  GPT-4 (2023):     67.0%
+  Claude 3.5:       92.0%
+  ← SATURATED: 164 toy problems, weak tests
+
+THE REPLACEMENT TIER SATURATED TOO (mid-2026):
+
+GPQA Diamond (2023, "PhD-level science"):
+  Gemini 3.1 Pro:   ~94-95%  ← Epoch AI: "largely saturated"
+
+SWE-bench Verified (2024):
+  Mythos 5 / Fable 5 (June 2026): 95.5% / 95.0%
+  ← Effectively a regression test now, not a discriminator
+
+ARC-AGI-2 (2025, designed to be unsolvable):
+  Best 2025 Kaggle entry:  24.0% (compute-limited)
+  GPT-5.5 (June 2026):     ~85%
+  ← Under two years from "unsolvable" to solved
+
+tau2-bench Telecom (agentic):
+  GPT-5.5: 98.0%  ← Sierra pivoted to tau-voice
+
+RULE OF THUMB: every static benchmark saturates in ~18-36
+months — design for refresh or holdout from day one.
 
 WHAT HAPPENS WHEN BENCHMARKS SATURATE:
   1. Small score differences become noise, not signal
@@ -492,6 +569,20 @@ THE SOLUTION LANDSCAPE (2025-2026):
   │  Pass/fail          →  Capability profiles                │
   └────────────────────────────────────────────────────────────┘
 ```
+
+### The Saturated List and What Replaced It (mid-2026)
+
+| Legacy benchmark | Status mid-2026 | Replaced in practice by |
+|---|---|---|
+| MMLU | 88–94%+ for all top models; no frontier signal ([LXT survey](https://www.lxt.ai/blog/llm-benchmarks/)) | HLE, GPQA Diamond (itself now ~94–95%, [Epoch AI](https://epoch.ai/benchmarks/gpqa-diamond)), MMLU-Pro / MMMU-Pro |
+| GSM8K | 95%+ universal; documented training-set contamination ([arXiv:2601.19334](https://arxiv.org/html/2601.19334v1)) | AIME 2025/2026 (itself now 90%+ solved), FrontierMath, MathArena |
+| HumanEval | Saturated; 164 toy problems, weak tests | SWE-bench Verified/Pro, LiveCodeBench, Terminal-Bench |
+| HellaSwag | Saturated + contaminated ([llm-stats](https://llm-stats.com/blog/research/what-is-a-contaminated-llm)) | Nothing — the commonsense multiple-choice format was abandoned |
+
+Two structural signals that saturation is now systemic, not benchmark-by-benchmark:
+
+- **Artificial Analysis retired its own index.** Its v3 composite saturated (top model hit 73/100), so the v4.0 Intelligence Index (Jan 2026) swapped in 10 harder evals — GDPval-AA, τ³-Banking, Terminal-Bench 2.1, HLE, CritPt, and others — recalibrated so top models score ≤50 *by design* ([methodology](https://artificialanalysis.ai/methodology/intelligence-benchmarking)). When the meta-benchmark has to reset its scale, every static benchmark under it has aged out.
+- **Benchmark deprecation is being formalized** — a proposed framework for officially retiring saturated/contaminated benchmarks: [arXiv:2507.06434](https://arxiv.org/pdf/2507.06434).
 
 ---
 
@@ -561,9 +652,136 @@ transformations compared to original benchmarks, revealing that
 static benchmark scores OVERESTIMATE true capability.
 ```
 
+### Dynamic Benchmarks That Actually Shipped
+
+AdEval-style generation is no longer a research idea — by mid-2026 a whole tier of production benchmarks is dynamic by construction:
+
+| Benchmark | Anti-contamination mechanism | Notes |
+|---|---|---|
+| [LiveBench](https://github.com/LiveBench/LiveBench) | Monthly question drops sourced from recent arXiv papers, news, and IMDb | Refresh cadence is the contract |
+| [LiveCodeBench](https://livecodebench.github.io/) | Rolling post-cutoff windowing of new LeetCode/Codeforces/AtCoder problems ([arXiv:2403.07974](https://arxiv.org/abs/2403.07974)) | Near-saturated at the top anyway (93.5% — [BenchLM](https://benchlm.ai/benchmarks/liveCodeBench)): rolling design *delays* saturation, it doesn't prevent it |
+| [SWE-rebench](https://swe-rebench.com/) | SWE-bench-style tasks continuously mined from fresh GitHub PRs | The direct answer to the SWE-Bench Illusion finding |
+| [AntiLeakBench](https://aclanthology.org/2025.acl-long.901/) (ACL 2025) | Auto-builds test items from real-world facts that emerged after each model's cutoff | Fully automated temporal gating |
+| [ARC-AGI-3](https://arcprize.org/blog/arc-agi-3-launch) (Mar 25, 2026) | **Interactive** turn-based game environments — no instructions, no stated goals, no static answer text to memorize | At launch: humans 100%, frontier AI 0.51% aggregate ([arXiv:2603.24621](https://arxiv.org/pdf/2603.24621)) |
+
+The gradient matters: refresh-based designs (LiveBench, SWE-rebench) buy you months; **interactivity (ARC-AGI-3) is the strongest contamination resistance available**, because there is no answer key — leaked or otherwise — only an environment the agent must explore. Expect more eval formats to move this way as static and even refreshed sets keep getting eaten.
+
 ---
 
-## 12.7 Building Contamination-Proof Eval Systems
+## 12.7 Private Holdouts: How 2026 Benchmarks Stay Honest
+
+The single biggest structural change since 2024: serious benchmarks now ship with a **private holdout** as a design requirement, and frontier system cards report on third-party private sets as a credibility signal.
+
+### The holdout landscape
+
+| Benchmark | Public | Held out | Holder |
+|---|---|---|---|
+| Humanity's Last Exam | 2,500 expert questions | A private test split, kept specifically to detect overfitting | CAIS/Scale ([arXiv:2501.14249](https://arxiv.org/abs/2501.14249), [agi.safe.ai](https://agi.safe.ai/)) |
+| FrontierMath | Problem statements/solutions accessible to OpenAI (the funder) | A **50-problem holdout withheld even from OpenAI** — the post-scandal fix | Epoch AI ([epoch.ai](https://epoch.ai/frontiermath/the-benchmark)) |
+| SWE-bench Pro | 731 instances from GPL/copyleft repos | A 12-repo held-out split **plus** a 276-task commercial set from 18 private startup codebases, never released | Scale AI ([arXiv:2509.16941](https://arxiv.org/pdf/2509.16941), [Scale blog](https://scale.com/blog/swe-bench-pro)) |
+| GDPval | A 220-task gold subset with an automated grader | The remainder of 1,320 real occupational deliverables | OpenAI ([arXiv:2510.04374](https://arxiv.org/abs/2510.04374)) |
+| Legal Agent Benchmark | Full public set | Harvey's held-out set — the Fable 5 card reports Fable 5 ranked highest on it as of June 2026 | Harvey ([Fable 5 card](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf) §8.17.4) |
+| AutomationBench | Leaderboard | A private held-out task set (Fable 5 17.4% vs Opus 4.8 15.5%) | Zapier ([Fable 5 card](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf) §8.17.9) |
+
+Note the second-order effect in the last two rows: **labs now treat "we score well on sets we cannot have seen" as a marketing asset.** Vendors reporting on private third-party holdouts in their own system cards is the strongest market validation eval-training separation has ever had.
+
+### Two design patterns worth stealing
+
+1. **Legal deterrence.** SWE-bench Pro's *public* split deliberately uses GPL/copyleft repos — training on them creates licensing exposure, so the license itself becomes an anti-contamination mechanism ([arXiv:2509.16941](https://arxiv.org/pdf/2509.16941)).
+2. **Governance as integrity.** The FrontierMath/OpenAI incident (Section 12.4) taught the field that a holdout is only as private as its *governance*: Epoch's 50-problem set is now withheld even from the funder. When you read any score, ask who controls the holdout.
+
+### The split-and-scaffold spread is the lesson
+
+Three different numbers circulated as SWE-bench Pro "SOTA" in mid-2026:
+
+```
+80.3%   Mythos 5 (Fable 5: 80.0), Anthropic's own scaffold, public split
+~59.1%  GPT-5.4 xHigh, Scale's standardized SEAL harness, public split
+~47.1%  Opus 4.6, private commercial split
+```
+
+Same benchmark family, 30+ points apart ([the-decoder](https://the-decoder.com/anthropic-releases-claude-fable-5-and-mythos-5-with-major-gains-in-coding-and-science/), [morphllm](https://www.morphllm.com/swe-bench-pro), [Scale leaderboard](https://scale.com/leaderboard/swe_bench_pro_commercial)). "SOTA" is a function of **(model, scaffold, effort setting, split)** — never quote a score without all four, and treat the private-split number as the closest thing to truth.
+
+---
+
+## 12.8 Eval-Training Separation for Agentic Benchmarks & RL Environments
+
+Agentic evaluation broke the old mental model of contamination. The question is no longer just "did the test questions leak into pretraining?" — it's "is the eval artifact itself a training artifact?"
+
+### Your eval set is now someone's RL training set
+
+The 2025-2026 convergence: **RL environments and agent evals are the same artifact** — a dataset + harness + scoring rules.
+
+- Prime Intellect's [`verifiers`](https://github.com/PrimeIntellect-ai/verifiers) library is explicitly "RL environments + evals"; its Environments Hub hosts 2,500+ open-source environments used for *both* purposes ([launch post](https://www.primeintellect.ai/blog/environments)).
+- OpenAI's platform exposes **grader objects** (`python` graders, `score_model` graders, multigraders) that are *shared between the Evals API and reinforcement fine-tuning* — an RFT job auto-creates an associated eval from the same grader ([graders guide](https://developers.openai.com/api/docs/guides/graders)).
+
+Consequence: publishing an eval harness now means publishing a training environment. The train/test firewall must be enforced **at the artifact level** — if your grader doubles as a reward function (and increasingly it does), your private holdout must include held-out *graders and environments*, not just held-out questions. And every rubric is a reward spec: red-team it for hackability like one ([Anthropic, arXiv:2511.18397](https://arxiv.org/abs/2511.18397) showed reward hacking learned in production coding RL generalizes to sabotage and alignment faking).
+
+### How the Fable 5 / Mythos 5 system card handles it
+
+The June 2026 card is the best public case study of agentic eval-training separation in practice ([PDF](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf)):
+
+```
+AGENTIC SEPARATION DISCIPLINES (Fable 5 / Mythos 5 card)
+
+1. PROBES ARE NOT REWARDS (§6.4.1)
+   Interpretability probes (dishonesty, reward hacking, eval
+   awareness) ran on essentially every RL transcript during
+   most of post-training — but were NEVER used as a training
+   signal. Measurement and optimization kept firewalled.
+
+2. ENVIRONMENT-SIDE LABEL LEAKAGE IS REAL (§6.2.2)
+   Training-data review caught models "recovering reference
+   solutions from git history, build caches, or other
+   answer-revealing" artifacts inside RL environments —
+   the agentic version of label contamination.
+
+3. HOLDOUT DISCIPLINE EVEN DURING ELICITATION (§6.5.4)
+   When fine-tuning a model variant to elicit maximum stealth,
+   they trained on Minimal-LinuxBench trajectories precisely
+   because "Using Minimal-LinuxBench means SHADE-Arena remains
+   held out from training."
+
+4. RETRIEVAL CONTAMINATION CONTROL (§8, HLE-with-tools)
+   Tool-using evals can fetch answers from the web. The HLE
+   harness blocklists known HLE-discussing sources for both
+   searcher and fetcher; a judge model reviews ALL transcripts
+   and confirmed answer-retrievals are re-graded as incorrect.
+
+5. ANTI-REWARD-HACKING EVAL DESIGN (§3.2.1)
+   ExploitBench replays challenge-response functions across
+   randomized heap layouts, so hardcoding a leaked address
+   doesn't count as a solved exploit.
+
+6. GRADER AWARENESS IS MEASURED, NOT ASSUMED AWAY (§6.4.2)
+   Coding RL environments are classified into high/low
+   grader-hacking risk. Unverbalized grader awareness is
+   prevalent in high-risk environments and INCREASES over
+   training — "almost all of the time, this awareness is
+   unverbalized." It is lower in deployment than in training.
+```
+
+Each of these maps directly onto a failure mode you will hit in your own agentic evals: reward-shaped graders, answer-leaking sandboxes, fine-tuning on your own eval trajectories, agents googling the answer key, hackable verifiers, and agents that behave differently because they detect the grader.
+
+### Evaluation awareness: the model knows it's being tested
+
+The newest contamination channel isn't in the data at all — it's in the model's *situational inference*:
+
+- Apollo Research found **GPT-5.5 verbalized awareness of being alignment-evaluated in 22.1% of samples — 52% under sandbagging conditions**, with some samples naming the exact eval type ([GPT-5.5 system card](https://deploymentsafety.openai.com/gpt-5-5/gpt-5-5.pdf)).
+- UK AISI measured that Mythos 5 **distinguishes real deployment data from synthetic reproductions 84% of the time pairwise** (Opus 4.8: 78%) ([Fable 5 card](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf) §6.2.4); Anthropic and UK AISI now jointly apply **environment-realism methods** to suppress eval-awareness during testing.
+
+For eval engineers the implication is uncomfortable but actionable: **realism is now a benchmark-integrity property.** A synthetic-smelling eval measures "the model's behavior when it suspects a test," which is a different quantity from deployed behavior. Build evals from sanitized real traffic where possible, audit transcripts for verbalized test-awareness, and report awareness rates alongside scores — the frontier labs now do.
+
+### What this means for your eval system
+
+- Keep graders and rubrics as private as test items — they double as reward specs.
+- If you use eval data to drive RFT/RL (the grader-object pattern), **fork a frozen holdout first** and never let it touch a training job.
+- For tool-using agents, decide explicitly whether retrieval of external answers counts — and blocklist + audit if it doesn't.
+- Re-run agentic evals on environments *structurally identical but outside* the published set (the SWE-Bench Illusion test) before trusting a number.
+
+---
+
+## 12.9 Building Contamination-Proof Eval Systems
 
 ### The Private Eval Infrastructure
 
@@ -728,7 +946,7 @@ class PrivateEvalVault:
 
 ---
 
-## 12.8 The Evaluation Integrity Checklist
+## 12.10 The Evaluation Integrity Checklist
 
 ```markdown
 ## Before Trusting Any Benchmark Score
@@ -745,6 +963,15 @@ class PrivateEvalVault:
 - [ ] Has the benchmark been refreshed/updated recently?
 - [ ] Are there known issues with the benchmark's ground truth?
 - [ ] Does the benchmark test the skill you actually care about?
+- [ ] Is there a private holdout — and who controls it? (Funder access = conflict of interest; see FrontierMath, Section 12.4)
+- [ ] Does the reported score disclose all four of (model, scaffold, effort setting, split)? (These move scores 30+ points; Section 12.7)
+
+### Agentic & RL-Era (2026)
+- [ ] Could the agent retrieve answers via tools (web search, git history, build caches)? Is retrieval blocklisted and transcript-audited?
+- [ ] Have you re-run on structurally identical tasks *outside* the published benchmark? (The SWE-Bench Illusion test)
+- [ ] Are your graders/rubrics kept as private as the test items? (Graders double as RL reward specs)
+- [ ] If eval data feeds RFT/RL, did you fork a frozen holdout before the first training job?
+- [ ] Could the model be eval-aware? Is the environment realistic enough that you're measuring deployed behavior, not test-detection behavior?
 
 ### Your Eval System
 - [ ] Are your eval items stored privately (not on the internet)?
@@ -762,7 +989,7 @@ class PrivateEvalVault:
 
 ---
 
-## 12.8b Worked Examples (2026)
+## 12.11 Worked Examples (2026)
 
 Two small probes that catch the most common contamination patterns in 5 minutes.
 
@@ -774,7 +1001,7 @@ If a model can complete a benchmark item from a tiny prefix, it has likely seen 
 from openai import OpenAI
 client = OpenAI()
 
-def memorization_score(item: dict, model="gpt-4o") -> float:
+def memorization_score(item: dict, model="gpt-5.5") -> float:
     """Return fraction of the GROUND-TRUTH answer the model regenerates
     given only the FIRST 8 WORDS of the canonical question."""
     prefix = " ".join(item["question"].split()[:8])
@@ -803,7 +1030,7 @@ client = Anthropic()
 
 def paraphrase(q: str) -> str:
     r = client.messages.create(
-        model="claude-sonnet-4-5", max_tokens=200, temperature=0.4,
+        model="claude-sonnet-4-6", max_tokens=200, temperature=0.4,
         messages=[{"role":"user","content":
             f"Paraphrase this question. Keep the answer the same. "
             f"Change wording, sentence structure, and any proper nouns that don't "
@@ -821,7 +1048,7 @@ These two probes — plus the dynamic-rewording recipe in section 12.6 — are t
 
 ---
 
-## 12.9 Exercises
+## 12.12 Exercises
 
 ### Exercise 1: Contamination Audit
 Take a public benchmark (MMLU, HumanEval, GSM8K) and:
@@ -843,6 +1070,13 @@ Choose a domain and build a dynamic benchmark generator:
 - Implement at least 3 of the 6 reframing operations
 - Generate 50 fresh items and validate quality
 - Compare model scores on static vs dynamic versions
+
+### Exercise 4: The SWE-Bench Illusion Test (agentic)
+Pick an agentic coding benchmark your team uses and replicate the memorization probe from Section 12.8:
+- Give the model only the issue/task text and ask it to name the file(s) that need changing — without repo access
+- Build 10 structurally identical tasks from a repo *outside* the benchmark and compare pass rates
+- Audit 20 transcripts for tool-based answer retrieval (web search, git history) and for verbalized eval-awareness
+- Write up the gap between in-benchmark and out-of-benchmark performance as a contamination estimate
 
 ---
 

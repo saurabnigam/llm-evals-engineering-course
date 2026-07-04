@@ -632,7 +632,7 @@ Return as JSON:
 """
         
         response = await self.llm.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5.4-mini",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
@@ -1270,6 +1270,7 @@ Production trace
 - Track judge **confidence** alongside the score. Low-confidence scores are the highest-value items to send to humans.
 - Always emit traces with [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) so you can swap eval/observability backends without re-instrumenting.
 - Watch for **drift signals**: rolling mean of judge scores, distribution shift in input length / language / topic, rate of refusals, rate of tool errors.
+- **Promotion is a privacy event.** A trace has a retention window; an eval dataset lives forever, gets committed to repos, and is shared across teams. Scrub or pseudonymize PII *at promotion time* (names, emails, account numbers — a regex pass plus a cheap LLM redaction check), tag every promoted row with its source-trace provenance, and make user deletion requests propagate to eval datasets too. Auditors will ask; "it's just test data" is not an answer.
 
 ### 6.6c Worked Examples (2026)
 

@@ -148,6 +148,10 @@ golden_dataset = [
 | **BLEU** | n-gram overlap | Translation quality |
 | **ROUGE** | Recall-oriented overlap | Summarization |
 | **Perplexity** | exp(cross-entropy) | Language model quality |
+| **pass@k** | `1 - (1-p)^k` — P(≥1 of k trials succeeds) | Code/agent tasks where one success is enough |
+| **pass^k** | `p^k` — P(*all* k trials succeed) | Agent reliability (see 1.3b) |
+
+> **Currency note:** BLEU, ROUGE, and perplexity are pre-LLM-era metrics — you will still meet them in papers, but they rarely gate modern systems. What frontier labs report in 2026 model cards is task success over repeated trials (Anthropic averages headline benchmarks over 5 trials per task in the [Fable 5 system card](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf)) plus rubric-based judge scores (Module 2).
 
 ### Evaluator
 
@@ -176,7 +180,89 @@ class HumanEvaluator:
 
 ---
 
+## 1.3b Agent Evals: Tasks, Trials, and pass@k vs pass^k
+
+LLMs are stochastic: the same prompt can succeed on one run and fail on the next. For multi-step agents this compounds across every step, so a single run tells you almost nothing. The vocabulary the industry standardized on comes from Anthropic's ["Demystifying evals for AI agents"](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents) (Jan 2026):
+
+| Term | Meaning |
+|------|---------|
+| **Task** | One test case: a prompt/scenario plus success criteria |
+| **Trial** | One stochastic run of a task (you run several per task) |
+| **Transcript / trajectory** | The full record of a trial — every tool call, reasoning step, and output |
+| **Outcome** | The actual end-state of the environment — *not* what the agent claims it did |
+
+Two rules from the same guide are worth internalizing on day one:
+
+1. **Grade outcomes, not paths.** Check what the agent *produced* (the file exists, the test passes, the refund was issued), not the step sequence it took to get there — step-sequence checks are brittle and punish valid alternative strategies.
+2. **Grader hierarchy:** deterministic/code graders where possible → LLM graders where necessary → humans judiciously (for calibration and gold standards).
+
+### The two reliability metrics
+
+Once you run k trials per task, there are two opposite ways to aggregate, and choosing between them is a *product decision*:
+
+```
+pass@k  =  P(at least ONE of k trials succeeds)  =  1 - (1-p)^k
+pass^k  =  P(ALL k trials succeed)               =  p^k
+
+           p = per-trial success rate
+```
+
+pass^k ("pass-hat-k") was introduced by [τ-bench](https://arxiv.org/abs/2406.12045) because a deployed agent must succeed *every* time — the original paper found GPT-4o's pass^8 fell below 25% on retail tasks. The same per-trial rate produces wildly different numbers:
+
+| Per-trial success p | pass@3 | pass^3 | pass^8 |
+|---------------------|--------|--------|--------|
+| 75% | 98.4% | 42.2% | 10.0% |
+| 90% | 99.9% | 72.9% | 43.0% |
+| 99% | ~100% | 97.0% | 92.3% |
+
+Read that middle row again: a "90% agent" has a **57% chance of at least one failure across 8 runs**. To ship an agent with pass^8 ≥ 90%, the per-trial success rate must exceed ~98.7%. This is why the 2026 benchmark wave (covered in [Module 2](../02-evaluation-methods/README.md)) reports reliability metrics, not just single-shot scores.
+
+```python
+from collections import defaultdict
+
+def reliability_report(trial_results: list[dict], k: int) -> dict:
+    """Estimate pass@k and pass^k empirically from logged trials.
+
+    trial_results: [{"task_id": "t1", "success": True}, ...]
+    Assumes >= k trials were run per task.
+    """
+    by_task = defaultdict(list)
+    for r in trial_results:
+        by_task[r["task_id"]].append(r["success"])
+
+    at_k = sum(any(t[:k]) for t in by_task.values()) / len(by_task)
+    hat_k = sum(all(t[:k]) for t in by_task.values()) / len(by_task)
+    return {"pass@k": at_k, "pass^k": hat_k, "k": k, "tasks": len(by_task)}
+
+trials = [
+    {"task_id": "t1", "success": True},  {"task_id": "t1", "success": True},
+    {"task_id": "t1", "success": False}, {"task_id": "t2", "success": True},
+    {"task_id": "t2", "success": True},  {"task_id": "t2", "success": True},
+]
+print(reliability_report(trials, k=3))
+# {'pass@k': 1.0, 'pass^k': 0.5, 'k': 3, 'tasks': 2}
+```
+
+### Worked example: which metric for which product?
+
+Your team built one coding agent and wants to ship it in two products. Same model, same per-trial success rate of 75%. Which reliability metric gates each release?
+
+| | Product A: research assistant | Product B: unattended migration bot |
+|---|---|---|
+| **How it's used** | Developer asks for a refactor *suggestion*, reviews it, can re-roll | Runs overnight, migrates 200 repos, nobody reviews each run |
+| **Cost of one failure** | Low — human catches it, retries | High — broken repo lands in production |
+| **One success enough?** | Yes — best-of-3 with human review | No — every run must succeed |
+| **Right metric** | pass@3 = **98.4%** → shippable | pass^3 = **42.2%** → not shippable |
+
+Identical agent, identical eval data — opposite ship decisions. If you had reported only pass@k for Product B, you would have shipped a coin flip. (Anthropic's agent-evals guide uses exactly this 75% → ~42% pass^3 arithmetic to make the point: [source](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents).)
+
+**Practical advice for getting started:** begin with 20–50 tasks drawn from real failures, isolate each trial in a clean environment so infra flakiness doesn't correlate across trials, and read the transcripts yourself — Module 2 covers the harness mechanics.
+
+---
+
 ## 1.4 The Eval Engineering Mindset
+
+This mindset is now a profession: by 2026, "eval engineer" is a posted job title — OpenAI hires [Software Engineers, Applied Evals](https://openai.com/careers/software-engineer-applied-evals-san-francisco/) and Scale hires [Evals Engineers](https://scale.com/careers/4629589005) to build exactly the systems this course teaches.
 
 ### Principle 1: Evals are Products
 Treat your evaluation system with the same rigor as your main product. It needs:
@@ -184,6 +270,8 @@ Treat your evaluation system with the same rigor as your main product. It needs:
 - Documentation
 - Testing (yes, tests for your tests!)
 - Monitoring
+
+Eval bugs ship wrong numbers just like product bugs ship broken features — and they happen at the highest level of the industry. xAI's Grok 4.1 model card admitted that **earlier model cards' multilingual refusal numbers had silently evaluated English prompts only** ([model card PDF](https://data.x.ai/2025-11-17-grok-4-1-model-card.pdf)). A published safety metric, wrong for multiple releases, because nobody tested the eval itself.
 
 ### Principle 2: Start Simple, Iterate
 ```
@@ -277,6 +365,39 @@ Level 3  —  A/B testing in production            (run on major releases)
 
 The most common mistake is jumping straight to Level 3 (or worse, vibes-based eval). Build Level 1 first, use Level 2 for the bulk of iteration, and validate the high-stakes wins with Level 3.
 
+This framing has since matured into the dominant applied-evals methodology: Husain and Shreya Shankar's [LLM Evals FAQ](https://hamel.dev/blog/posts/evals-faq/evals-faq.pdf) (updated Jan 2026) operationalizes it as *error analysis first* — read and categorize real failures before writing any judge — and measure every LLM judge by its TPR/TNR against human labels rather than trusting it blindly.
+
+### Error analysis in practice: a 15-minute worked example
+
+"Error analysis" sounds like a research activity. It is actually this: **read your failures one by one, write a short note on each, then count the notes.** Here it is on the support bot from §1.5, using 8 traces users thumbs-downed:
+
+**Step 1 — Open coding.** Read each failure and write down *what went wrong in this specific trace*, in plain words. No categories yet — the categories must come *from* the data, not from your assumptions:
+
+```
+#1  Asked for refund status → bot explained refund POLICY instead
+#2  "Where's my order?"     → bot asked for order ID it was already given
+#3  Angry customer          → bot's tone fine, but offered no escalation
+#4  Refund for damaged item → bot recited policy, never checked eligibility
+#5  Two questions in one    → bot answered the first, ignored the second
+#6  "Cancel my subscription"→ bot explained how to cancel, didn't do it
+#7  Asked in Spanish        → bot answered in English
+#8  Refund timeline         → bot said "5-7 days" (correct is 10 business days)
+```
+
+**Step 2 — Axial coding.** Now cluster the notes into failure modes and count:
+
+| Failure mode | Traces | Count |
+|---|---|---|
+| **Answers *about* the task instead of *doing* it** (policy recited, action not taken) | #1, #4, #6 | **3** |
+| Ignores part of the input (given info, second question) | #2, #5 | 2 |
+| Missing escalation behavior | #3 | 1 |
+| Language mismatch | #7 | 1 |
+| Factual error in policy detail | #8 | 1 |
+
+**Step 3 — Act on the counts.** The table converts "the bot feels unreliable" into decisions: the dominant mode ("explains instead of acts") becomes your first targeted eval — 10 test cases where the correct behavior is an *action*, scored by a binary judge asking exactly that question ("did the response perform or initiate the requested action, or only describe it?"). The singleton factual error (#8) doesn't need a judge at all — it needs a rule-based check against the policy doc (Level 1 in the hierarchy above). One pass of reading, and you know *what to build and in what order*.
+
+Notice what made this work: the failure modes are **specific to this bot** — no generic "helpfulness/coherence/relevance" taxonomy would have surfaced "explains instead of acts," and a generic judge would have scored #6 highly (it *was* a clear, polite, accurate explanation). This is the FAQ's core argument against off-the-shelf metrics: **your evals must be derived from your failures, not from a template.** Two continuations of this workflow elsewhere in the course: module 02 §2.3.6 shows how to validate the judge you just proposed against human labels (TPR/TNR — with the arithmetic), and module 04 §4.2b shows the same read-cluster-act loop when you have *no* production traces yet and must manufacture the failures yourself.
+
 ---
 
 ## 1.4c Choosing an Eval Method (Yan)
@@ -305,17 +426,25 @@ Is the criterion OBJECTIVE (factuality, format, toxicity, instruction-following)
 
 ---
 
-## 1.4d LLM-as-Judge: The Three Biases You Will Fight
+## 1.4d LLM-as-Judge: The Biases You Will Fight
 
-Every LLM-judge exhibits some mix of these systematic biases (Zheng et al. 2023, ["Judging LLM-as-a-Judge"](https://arxiv.org/abs/2306.05685)):
+Every LLM-judge exhibits some mix of these systematic biases (the classic catalog is Zheng et al. 2023, ["Judging LLM-as-a-Judge"](https://arxiv.org/abs/2306.05685); the broader survey is ["Justice or Prejudice?"](https://arxiv.org/abs/2410.02736)):
 
 | Bias | What it looks like | Mitigation |
 |------|--------------------|------------|
 | **Position bias** | Prefers the response shown first (or last) in pairwise comparisons | Randomize order; run both orderings and require agreement; report tie rate |
-| **Verbosity bias** | Rates longer / more elaborate responses higher even when content is equal | Match lengths; penalize unjustified length in the rubric; use a length-controlled paired baseline |
+| **Verbosity bias** | Rates longer / more elaborate responses higher even when content is equal — *but see the 2026 revision below* | Match lengths; penalize unjustified length in the rubric; use a length-controlled paired baseline |
+| **Style / formatting bias** | Rewards confident tone, headers, and bullet-heavy formatting over plain-but-correct prose | Explicit rubric criteria for substance; strip or normalize formatting before judging |
 | **Self-enhancement bias** | Prefers responses produced by the same model family (GPT-judge prefers GPT outputs) | Use a *panel of diverse judges* (PoLL — Verga et al. 2024, [arXiv:2404.18796](https://arxiv.org/abs/2404.18796)); never use the same model as judge and generator |
 
-A panel of three small judges (e.g., GPT-4o-mini + Claude Haiku 4.5 + Gemini 2.5 Flash) routinely beats a single GPT-4-class judge on both alignment with humans *and* cost.
+**The 2026 revision:** a systematic evaluation of bias mitigations (["Judging the Judges"](https://arxiv.org/html/2604.23178), 2026) found **style/formatting bias is the most robust bias across models (severity 0.76–0.92)** — and, surprisingly, all five judge models tested preferred *concise* responses over padded ones. The old "longer always scores higher" folklore is dead; what survives is a bias toward polished, confident *presentation*. Don't fight last year's bias: measure which biases *your* judge actually has against *your* data.
+
+A panel of three small judges from different families (e.g., GPT-5.4-mini + Claude Haiku 4.5 + Gemini 3.5 Flash) routinely beats a single large judge on both alignment with humans *and* cost — the PoLL paper put the panel at roughly 1/7 the cost of a single GPT-4-class judge.
+
+Two closing cautions that the 2025–2026 literature added:
+
+- **Biases are managed, never eliminated.** The operational fix is *calibration*: human-label a small golden set, run the judge alongside, and track agreement until you trust it — productized as [LangSmith Align Evals](https://blog.langchain.com/introducing-align-evals/) (Jul 2025), operationalized as judge TPR/TNR in the [Hamel/Shankar FAQ](https://hamel.dev/blog/posts/evals-faq/evals-faq.pdf). Module 2 ([§2.3.6](../02-evaluation-methods/README.md)) covers the loop.
+- **Don't trust the judge's stated reasoning.** Reasoning models don't always verbalize what actually drove their answer ([Anthropic, arXiv 2505.05410](https://arxiv.org/pdf/2505.05410)) — a judge's chain-of-thought explanation is a plausibility narrative, not a faithful readout. Validate judges by their *agreement with humans*, not by how convincing their critiques sound.
 
 ---
 
@@ -446,6 +575,30 @@ class CustomerSupportEvaluator:
         return float(self.llm_judge.complete(prompt))
 ```
 
+> **Modernize this judge before copying it.** "Rate from 0.0 to 1.0, return only the number" is the 2023 pattern, and it contradicts the advice in 1.4c: an unanchored scalar is uninterpretable and hard to calibrate against humans. Current practice (the [HealthBench](https://cdn.openai.com/pdf/bd7a39d5-9e9f-47b3-903c-8b847ca650c7/healthbench_paper.pdf) pattern, echoed in [Anthropic's agent-evals guidance](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents)) decomposes each test case into explicit rubric criteria ("states the 30-day window: yes/no", "cites the correct policy doc: yes/no"), grades each criterion with an *isolated* binary judge call, and aggregates with weights. You get interpretable failures for free. Implementation in [Module 2 §2.3.4](../02-evaluation-methods/README.md).
+
+### Step 4: Choose the Metric — A Worked Example (Escalation)
+
+The `escalation` dimension is scored "binary (correct/incorrect)" above — but *which* aggregate metric should gate the release? Walk the numbers. Suppose your test set has 1,000 conversations, of which 50 truly require escalation (5% — escalation is a rare class):
+
+| | Bot A: never escalates | Bot B: tuned to catch escalations |
+|---|---|---|
+| True positives (escalated, correctly) | 0 | 45 |
+| False negatives (missed escalation) | 50 | 5 |
+| False positives (unnecessary escalation) | 0 | 45 |
+| **Accuracy** | (0+950)/1000 = **95.0%** | (45+905)/1000 = **95.0%** |
+| **Recall** | 0/50 = **0%** | 45/50 = **90%** |
+| **Precision** | undefined (never fires) | 45/90 = **50%** |
+
+Both bots score **identical 95% accuracy** — yet Bot A silently abandons every customer who needed a human. Accuracy is the wrong gate whenever the class you care about is rare.
+
+The right choice comes from the *cost asymmetry*:
+
+- **False negative** (missed escalation): furious customer, churn, possibly a regulatory complaint — expensive.
+- **False positive** (unnecessary escalation): a human agent spends two minutes confirming the bot could have handled it — cheap.
+
+So the metric to gate on is **recall on the escalation class, with a precision floor as a guardrail** (e.g., "recall ≥ 90% while precision ≥ 50%") — the precision floor stops the degenerate strategy of escalating everything. This is the same decision pattern as 1.3b's pass@k vs pass^k choice: the metric is determined by which failure costs more, not by which number looks best on a dashboard.
+
 ---
 
 ## 1.6 Exercises
@@ -461,6 +614,21 @@ For a code generation AI (like GitHub Copilot), list at least 10 potential failu
 
 ### Exercise 3: Metric Selection
 A recommendation system shows users products they might like. Which metrics would you prioritize and why?
+
+### Exercise 4: Agent Reliability
+Your agent succeeds on 85% of individual trials. (a) Compute pass@4 and pass^4 by hand, then verify with the `reliability_report` function from 1.3b. (b) Your PM wants "99% reliability over 10 consecutive runs" — what per-trial success rate does that require? (c) Name one product where pass@k is the honest metric and one where reporting it would be misleading.
+
+### Self-grading rubrics
+
+An eval course whose own exercises have no ground truth would be malpractice, so — practicing what §2.3.4 and §4.2b preach — here are anchored rubrics and answer keys. Grade yourself *before* reading module 02.
+
+**Exercise 1** — 0: dimensions are generic quality words (accuracy, fluency, coherence) that fit any NLP system. 1: dimensions are summarization-specific (faithfulness to source, coverage of key points, compression ratio, handling of numbers/names) but test cases don't include failure-triggering inputs. 2: dimensions are task-specific *and* the test cases include inputs designed to break each one (a source with contradicting statements for faithfulness; a document where the key point is in the middle for coverage).
+
+**Exercise 2** — 0: fewer than 10, or all variations of "generates wrong code." 1: 10+ modes spanning at least three of: correctness, security, performance, style, hallucinated APIs, license contamination, prompt-context misuse. 2: additionally, severity is argued from *blast radius* (a subtle off-by-one that passes review is rated above an obvious syntax error, because the obvious one gets caught).
+
+**Exercise 3** — 0: picked "accuracy." 1: proposes engagement/relevance metrics with reasons. 2: recognizes the trap in the question — recommendation quality is inherently *online* (Level 3 in §1.4b): offline proxies like rating-prediction correlate weakly with outcomes, so the honest answer is offline guardrails (diversity, no-repeats, latency) plus an online A/B on retention/conversion.
+
+**Exercise 4 answer key** — (a) pass@4 = 1 − 0.15⁴ ≈ **99.9%**; pass^4 = 0.85⁴ ≈ **52.2%** — same agent, and both numbers are true; which one you report is an honesty decision. (b) p¹⁰ ≥ 0.99 ⇒ p ≥ 0.99^(1/10) ≈ **99.9% per trial** — tell your PM that "99% over 10 runs" is a *three-nines* single-trial requirement, which usually changes the conversation from prompt-tuning to adding verification/retry layers. (c) pass@k honest: a brainstorming or code-suggestion tool where a human reviews k candidates and picks one. pass@k misleading: any unattended agent — a payment-processing or data-deletion agent that succeeds "at least once in 4 tries" also *fails destructively* up to 3 times.
 
 ---
 

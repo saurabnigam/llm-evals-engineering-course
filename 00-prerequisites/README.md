@@ -51,7 +51,7 @@ def get_greeting(name: str, time_of_day: str) -> str:
 # LLM-based: You describe what you want, model figures out how
 def get_greeting_llm(name: str, time_of_day: str) -> str:
     response = openai.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=[{
             "role": "user",
             "content": f"Generate a friendly greeting for {name}. It's {time_of_day}."
@@ -102,17 +102,40 @@ response = model.generate(prompt, temperature=0.0)  # For evals, use 0.0
 # Cost and limits are measured in tokens
 
 # CONTEXT WINDOW: How much text the model can "see" at once
-# GPT-4o: 128K tokens ≈ 300 pages
-# Claude Opus/Sonnet 4.5: 200K tokens ≈ 500 pages
-# Gemini 2.5 Pro: 1M+ tokens ≈ 2,500 pages
+# The mid-2026 frontier converged on 1M tokens (≈ 2,500 pages):
+# Claude Fable 5 / Opus 4.8, GPT-5.5, and Gemini 3.1 Pro all offer 1M.
+# (Smaller/cheaper models still ship 128–256K.)
 
-# REASONING MODELS (introduced 2024, mainstream by 2026):
-# OpenAI o-series (o3, o4-mini), Claude with extended thinking,
-# Gemini 2.5 Thinking, DeepSeek-R1.
-# These models produce an explicit "thinking" trace before answering.
-# Implication for evals: you can score the *reasoning chain* itself,
-# not just the final answer (see CoT-faithfulness evals in module 02).
+# REASONING MODELS (the default by 2026, not a niche):
+# Almost every frontier model now produces an explicit "thinking" trace
+# before answering — Claude with extended/adaptive thinking, OpenAI's
+# GPT-5.x reasoning, Gemini 3.x Thinking, DeepSeek V4. "Effort" or
+# "thinking budget" is now a tunable knob that changes both score and cost
+# (e.g. Fable 5 reports benchmarks at "adaptive thinking, max effort").
+# Implication for evals: you can score the *reasoning chain* itself, not
+# just the final answer (see CoT-faithfulness evals in module 02) — AND
+# you must record the effort setting next to every score, because the same
+# model at "low" vs "max" effort is effectively two different systems.
 ```
+
+---
+
+## 0.2b How Modern Models Are Trained (the 60-Second Version)
+
+You don't need to train models to evaluate them, but three words from the training pipeline now show up constantly in eval work, so here they are in plain terms (Module 11 has the full version):
+
+```
+PRETRAINING ──▶ SFT ──▶ RLHF / RLVR ──▶ (safety tuning) ──▶ shipped model
+   "learn      "learn to   "learn to be      "learn to
+    language"   follow       preferred/        refuse
+                instructions" correct"          misuse"
+```
+
+- **RLHF** (RL from *Human* Feedback): humans rank model answers, a reward model learns "what people prefer," and the model is optimized toward that. Great for taste and tone; weak when "good" is subjective.
+- **RLVR** (RL from *Verifiable* Rewards): the reward is a checkable fact — *did the code pass the tests? is the math answer correct?* This is the engine behind the 2024–2026 leap in coding and math, and it's why frontier coding scores shot up (e.g. SWE-bench Verified climbing from the ~50% range in 2024 to ~95% for the best 2026 models — [SWE-bench Verified leaderboard](https://llm-stats.com/benchmarks/swe-bench-verified)).
+- **Reward hacking**: when the model learns to satisfy the *checker* rather than the *intent* — e.g. hard-coding a test's expected output instead of solving the problem. Anthropic showed in Nov 2025 that reward hacking learned in production coding RL can generalize to broader misalignment ([arXiv:2511.18397](https://arxiv.org/abs/2511.18397)).
+
+**Why an eval engineer cares:** the artifact you write to *grade* a model (a rubric, a unit test, a judge prompt) is the same kind of artifact used to *reward* it during RLVR. "Environments are the new datasets" — your eval set can become a training set ([Prime Intellect](https://www.primeintellect.ai/blog/environments)). That means **every grader you write is a potential reward spec, and is therefore hackable** — a theme you'll see in Modules 02, 10, and 11.
 
 ---
 
@@ -212,7 +235,7 @@ client = OpenAI()
 def my_chatbot(user_message: str) -> str:
     """The system we want to evaluate"""
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-5.4-mini",
         messages=[
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": user_message}
@@ -260,7 +283,7 @@ Return JSON: {{"accuracy": X, "helpfulness": X, "clarity": X, "reasoning": "..."
 """
     
     result = client.chat.completions.create(
-        model="gpt-4o",  # Use stronger model for judging
+        model="gpt-5.5",  # Use stronger model for judging
         messages=[{"role": "user", "content": eval_prompt}],
         response_format={"type": "json_object"}
     )
@@ -421,7 +444,7 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.schema import HumanMessage, SystemMessage
 
 # Initialize model
-llm = ChatOpenAI(model="gpt-4o", temperature=0)
+llm = ChatOpenAI(model="gpt-5.5", temperature=0)
 
 # Simple usage
 response = llm.invoke("What is 2+2?")
@@ -443,7 +466,7 @@ from openai import OpenAI
 client = OpenAI()
 
 response = client.chat.completions.create(
-    model="gpt-4o",
+    model="gpt-5.5",
     messages=[
         {"role": "system", "content": "You are helpful."},
         {"role": "user", "content": "Hello!"}
@@ -513,7 +536,7 @@ Now that you understand the foundations, proceed to:
 
 | Term | Definition |
 |------|------------|
-| **LLM** | Large Language Model (GPT-4, Claude, etc.) |
+| **LLM** | Large Language Model (GPT-5, Claude, Gemini, etc.) |
 | **Prompt** | Instructions/context given to the model |
 | **Completion** | The model's output/response |
 | **Token** | Unit of text (~4 characters) |

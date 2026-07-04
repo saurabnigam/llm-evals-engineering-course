@@ -47,15 +47,29 @@ As your AI system grows, your evaluation system must scale with it. This module 
 Total Eval Cost = (LLM Calls × Cost per Call) + (Compute × Hours) + (Human Labels × Cost per Label)
 ```
 
-### Cost Breakdown Example
+### Cost Breakdown Example (mid-2026 prices)
 
 | Component | Unit Cost | Daily Volume | Daily Cost |
 |-----------|-----------|--------------|------------|
-| GPT-4o Judge | $0.015/call | 10,000 calls | $150 |
-| GPT-4o-mini | $0.0003/call | 50,000 calls | $15 |
+| Sonnet 4.6 judge (~2k in / 250 out tok) | $0.0098/call | 10,000 calls | $98 |
+| Haiku 4.5 screener (~500 in / 20 out tok) | $0.0006/call | 50,000 calls | $30 |
 | Compute (GPU) | $2/hour | 24 hours | $48 |
 | Human Labels | $0.50/label | 200 labels | $100 |
-| **Total** | | | **$313/day** |
+| **Total** | | | **$276/day** |
+
+Per-call costs are *derived*, not quoted — always compute them from per-million-token list prices and your measured token counts:
+
+| Model | Input $/MTok | Output $/MTok | Typical eval role |
+|---|---|---|---|
+| `claude-haiku-4-5` | $1.00 | $5.00 | Tier-1 screener, high-volume checks |
+| `claude-sonnet-4-6` | $3.00 | $15.00 | Default production judge |
+| Claude Sonnet 5 | $2.00 (intro) | $10.00 (intro) | Judge candidate — intro pricing through Aug 31, 2026, then $3/$15 |
+| `claude-opus-4-8` | $5.00 | $25.00 | Final-tier judge for ambiguous samples |
+| `claude-fable-5` | $10.00 | $50.00 | Capability evals — almost never a judge |
+
+Prices verified July 2026 against the [Claude pricing docs](https://platform.claude.com/docs/en/docs/about-claude/pricing); always re-check, as prices change. Opus 4.8 fast mode is **$10/$50** — double the standard $5/$25 for the *same* model, so the speed knob is a cost lever, not just a latency one ([launch post](https://www.anthropic.com/news/claude-opus-4-8)). Two more cost gotchas from the same docs: (1) **tokenizer drift** — Opus 4.7+, Fable/Mythos 5, and Sonnet 5 use a newer tokenizer that produces **~30% more tokens for the same text**, so per-call costs don't scale down from older models the way the list price suggests; (2) **Batch API is a flat 50% off** input and output for every model. Worked example: a Sonnet 4.6 judge call at 2,000 input + 250 output tokens costs 2,000 × $3/1M + 250 × $15/1M ≈ **$0.0098**.
+
+A 2026 heuristic for when to invest in the optimizations below: if judge spend exceeds roughly 10% of your total LLM bill, distill a smaller judge or sample by failure signal ([Confident AI](https://www.confident-ai.com/blog/llm-agent-evaluation-complete-guide) — treat the exact threshold as folklore, not a law).
 
 ### 5.2.2 Cost Reduction Strategies
 
@@ -64,11 +78,12 @@ class CostOptimizedEvaluator:
     """Minimize cost while maintaining quality"""
     
     def __init__(self):
-        # Tiered models by cost
+        # Tiered models by cost ($/call at ~2k input / 250 output tokens,
+        # derived from list prices — see 5.2.1)
         self.models = {
-            'cheap': {'name': 'gpt-4o-mini', 'cost': 0.0003},
-            'medium': {'name': 'gpt-4o', 'cost': 0.005},
-            'expensive': {'name': 'gpt-4o', 'cost': 0.015}  # with more context
+            'cheap': {'name': 'claude-haiku-4-5', 'cost': 0.0033},
+            'medium': {'name': 'claude-sonnet-4-6', 'cost': 0.0098},
+            'expensive': {'name': 'claude-opus-4-8', 'cost': 0.0163}
         }
         
         # Cache for repeated queries
@@ -148,9 +163,9 @@ class CostOptimizedEvaluator:
         
         budget_per_sample = remaining_budget / remaining_samples
         
-        if budget_per_sample >= 0.01:
+        if budget_per_sample >= self.models['expensive']['cost']:
             return 'expensive'
-        elif budget_per_sample >= 0.003:
+        elif budget_per_sample >= self.models['medium']['cost']:
             return 'medium'
         else:
             return 'cheap'
@@ -226,7 +241,7 @@ class EvalCache:
 class CachedLLMJudge:
     """LLM Judge with caching"""
     
-    def __init__(self, cache: EvalCache, model: str = "gpt-4o"):
+    def __init__(self, cache: EvalCache, model: str = "gpt-5.5"):
         self.cache = cache
         self.model = model
         self.client = OpenAI()
@@ -350,7 +365,7 @@ class AsyncEvalPipeline:
         client = AsyncOpenAI()
         
         response = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5.4-mini",
             messages=[{
                 "role": "user",
                 "content": f"Evaluate this output: {sample['output']}"
@@ -546,7 +561,7 @@ class BatchedLLMEvaluator:
     """Batch multiple evaluations into single API calls"""
     
     def __init__(self, 
-                 model: str = "gpt-4o-mini",
+                 model: str = "gpt-5.4-mini",
                  batch_size: int = 10):
         self.client = OpenAI()
         self.model = model
@@ -731,7 +746,7 @@ class SimilarityBatcher:
 │       │ 30,000 pass (38%)                                                   │
 │       ▼                                                                      │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  STAGE 3: Fast LLM (GPT-4o-mini, 50ms per sample)                   │    │
+│  │  STAGE 3: Fast LLM (GPT-5.4-mini, 50ms per sample)                   │    │
 │  │  - Quick quality check                                              │    │
 │  │  - Score 0-1                                                        │    │
 │  │  Cost: ~$9 | Time: 25 minutes                                      │    │
@@ -740,7 +755,7 @@ class SimilarityBatcher:
 │       │ 5,000 uncertain (17%)                                               │
 │       ▼                                                                      │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  STAGE 4: Full LLM Judge (GPT-4o, 500ms per sample)                 │    │
+│  │  STAGE 4: Full LLM Judge (GPT-5.5, 500ms per sample)                 │    │
 │  │  - Detailed evaluation                                              │    │
 │  │  - Rubric-based scoring                                             │    │
 │  │  Cost: ~$75 | Time: 45 minutes                                     │    │
@@ -760,8 +775,8 @@ class ProgressiveEvalPipeline:
         self.stages = [
             HeuristicFilter(name='heuristics'),
             ClassifierStage(name='classifier', model='quality-classifier-v1'),
-            LLMStage(name='quick_llm', model='gpt-4o-mini'),
-            LLMStage(name='full_llm', model='gpt-4o')
+            LLMStage(name='quick_llm', model='gpt-5.4-mini'),
+            LLMStage(name='full_llm', model='gpt-5.5')
         ]
         
         # Thresholds for early exit
@@ -997,9 +1012,9 @@ from openai import OpenAI
 
 anthropic, openai = Anthropic(), OpenAI()
 
-CHEAP_JUDGE = ("openai",   "gpt-4o-mini",        0.0002)   # $/1k input tokens
+CHEAP_JUDGE = ("openai",   "gpt-5.4-mini",        0.0002)   # $/1k input tokens
 MID_JUDGE   = ("anthropic","claude-haiku-4-5",   0.0008)
-STRONG      = ("anthropic","claude-sonnet-4-5",  0.003)
+STRONG      = ("anthropic","claude-sonnet-4-6",  0.003)
 
 def judge(prompt: str, model_tuple) -> tuple[float, float]:
     """Return (score 0-1, judge confidence 0-1)."""
@@ -1044,7 +1059,7 @@ with open("requests.jsonl", "w") as f:
             "custom_id": f"sample-{i}",
             "method": "POST",
             "url": "/v1/chat/completions",
-            "body": {"model": "gpt-4o-mini", "temperature": 0,
+            "body": {"model": "gpt-5.4-mini", "temperature": 0,
                      "messages": [{"role":"user","content":sample["input"]}]},
         }) + "\n")
 
@@ -1072,7 +1087,7 @@ LONG_RUBRIC = open("rubric.md").read()   # 8–12k tokens of detailed criteria +
 
 def judge(sample_input: str, sample_output: str) -> str:
     msg = client.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=200,
         system=[
             {"type": "text",

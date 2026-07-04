@@ -67,6 +67,117 @@ This is the classic "chicken and egg" problem: you need good evals to improve yo
 
 ---
 
+## 4.2b From Blank Page to First 30 Cases: The Five Moves
+
+Before any of the generation machinery below, there is a thinking process — and it's the part most engineers are never taught. Told "write 30 test cases," most people freeze, because the brain treats it as a *memory retrieval* task ("name 30 movies" — hard). The five moves below turn it into a *systematic generation* task ("name a comedy, an action film, a horror film…" — easy). We'll carry one running example through all five: **an agent that root-causes dbt data-lineage incidents** ("revenue doubled yesterday — why?").
+
+### Move 1 — Enumerate failure dimensions, not cases
+
+Don't ask *"what are 30 bugs?"* Ask *"what **kinds** of bugs exist?"* The second question is answerable from domain knowledge even with zero incident history:
+
+```
+FAILURE DIMENSIONS for a dbt root-cause agent
+
+  Join bugs         dedup removed, key changed, INNER↔LEFT flipped
+  Filter bugs       WHERE clause added/removed/narrowed
+  Schema bugs       column renamed/retyped — compiles fine, dashboard NULLs
+  Freshness bugs    source stopped loading, schedule broken
+  Incremental bugs  backfill missed, is_incremental() logic wrong
+  Timezone bugs     UTC↔local boundary shifts daily aggregates
+```
+
+Each dimension now generates cases almost mechanically. Join bugs alone: someone removed `DISTINCT` (revenue doubles) · join key changed from `customer_id` to `account_id` (half the rows vanish) · `INNER JOIN` became `LEFT JOIN` (duplicates appear). Three cases in thirty seconds — from a dimension, not from memory. This is the same taxonomy-first discipline as Principle 4 in [module 01](../01-fundamentals/) ("understand your failure modes"), applied *before* the system exists.
+
+### Move 2 — Sample the grid
+
+Cross your dimensions with a difficulty axis and fill *some* cells — you do not need every combination, you need spread:
+
+| | Easy (symptom names the table) | Medium (one hop away) | Hard (multi-hop / confounded) |
+|---|---|---|---|
+| **Join** | ✅ case 1 | ✅ case 2 | ✅ case 3 |
+| **Filter** | ✅ case 4 | | ✅ case 5 |
+| **Schema** | | ✅ case 6 | |
+| **Freshness** | ✅ case 7 | | |
+| **Incremental** | | ✅ case 8 | ✅ case 9 |
+| **Timezone** | | | ✅ case 10 |
+
+Ten cases with deliberate coverage beats thirty variations of the one bug you happen to remember. The grid also *shows you your blind spots*: an empty row is a dimension you can't yet test — which is itself a finding.
+
+### Move 3 — Manufacture ground truth by fault injection
+
+The cold-start superpower: **when you plant the bug yourself, you know the answer.** This is mutation testing, borrowed from software engineering — where you deliberately change `a + b` to `a - b` and check that your tests *fail* (if they still pass, your tests are theater). For an agent eval: take a known-good dbt project, break one thing, and the ground truth writes itself.
+
+```
+FAULT INJECTION → GROUND TRUTH FOR FREE
+
+  Injection (what you do)              Symptom (the ticket you write)     Ground truth (you know it!)
+  ─────────────────────────────────    ────────────────────────────────   ─────────────────────────────
+  Remove dedup from int_payments       "Revenue ~2x normal since Tue"     dedup removal → join fanout
+  Change join key to account_id        "Half our customers disappeared"   wrong join key in stg_customers
+  Rename revenue → total_revenue       "Dashboard shows NULLs"            silent schema break downstream
+  Pause the orders source loader       "Numbers frozen since Monday"      source freshness, not transform
+```
+
+The eval case is then: **input** = the realistic ticket (what a confused stakeholder would actually write — *not* "we removed dedup, find it"), **expected output** = the root cause you planted. If your team has 5 real incidents, those are gold — write them up first (module 01's golden-dataset rule: real > synthetic). Then extend to 25 injected ones for coverage. And note the mirror-image lesson: if the agent misses a planted bug, you've learned something; if it finds *every* planted bug but the injections were all trivially greppable, your *eval* is too easy — mutate harder.
+
+### Move 4 — Anchor the rubric to answer depth
+
+Binary pass/fail throws away the signal you need most in the cold-start phase: *how close* the agent got. Write anchored partial credit **per case**, with the anchors describing concrete answers:
+
+```
+CASE: "Revenue ~2x normal since Tuesday"  (planted: dedup removed in int_payments)
+
+  0/2  Wrong locus entirely            "The problem is in the orders table"
+  1/2  Right locus, wrong mechanism    "Something is wrong with the payments join"
+  2/2  Root cause + mechanism          "Dedup removed from int_payments → join fanout"
+```
+
+This is a per-example rubric — the same pattern [HealthBench and GDPval](../02-evaluation-methods/) use at frontier scale (module 02, §2.3.4), just three lines instead of twelve criteria. Two rules: the anchors must quote *plausible wrong answers* (write them by predicting how the agent will fail), and a partial-credit "1" must be genuinely useful triage, not consolation. Whether a human or an LLM judge applies the rubric, the anchors are what make scores reproducible — "1/2 because it said payments-join but not dedup" is checkable; "felt half right" is not.
+
+### Move 5 — Run, cluster, expand where weak
+
+Now run the agent on all 10 cases and do the thing everyone cites and nobody demonstrates — **error analysis**. Read every failure and label it with a short code, then count:
+
+```
+RESULTS OF THE FIRST RUN (10 cases)
+
+  Case  Dimension     Score  Failure code (open coding)
+  ────  ───────────   ─────  ─────────────────────────────────────────
+   1    Join/easy      2/2   —
+   2    Join/med       1/2   found join, missed dedup mechanism
+   3    Join/hard      0/2   blamed upstream table, never traced lineage
+   4    Filter/easy    2/2   —
+   5    Filter/hard    0/2   found filter, wrong column
+   6    Schema/med     2/2   —
+   7    Fresh/easy     2/2   —
+   8    Incr/med       1/2   right model, called it "data quality issue"
+   9    Incr/hard      0/2   checked only the final model, then gave up
+  10    TZ/hard        0/2   blamed upstream table, never traced lineage
+
+  CLUSTERED (axial coding):
+   "never traced lineage past one hop"   → 3 failures  ◀ dominant cluster
+   "right locus, vague mechanism"        → 2 failures
+   "wrong column/detail"                 → 1 failure
+```
+
+The dominant cluster is the improvement hypothesis: *the agent doesn't walk the DAG more than one hop.* That's actionable — add a lineage-traversal tool, or force a "trace to source" step — in a way that "60% average score" never is. **The score tells you where you are; the clusters tell you what to do.** Then close the loop: fix, re-run, and *generate five more hard multi-hop cases* (back to Move 3), because your grid just told you that's where the agent lives or dies.
+
+```
+   Enumerate dimensions ─▶ Sample grid ─▶ Inject faults ─▶ Anchor rubric
+          ▲                                                     │
+          │                                                     ▼
+   Expand where weak ◀── Cluster failures ◀── Run agent ◀── (10 cases)
+```
+
+### How this connects to the rest of the module
+
+- **4.3's generators** (below) automate Moves 1–2 at scale — but only after you've done Move 1 by hand; an LLM prompted with your dimension list produces dramatically better synthetic cases than one asked for "30 diverse test cases."
+- **4.6's judge bootstrap and 4.8b's rubric extraction** complement Move 4 once you have more outputs than you can hand-score.
+- **Module 01 §1.4b** is where this methodology comes from (Husain/Shankar's error-analysis-first workflow); **module 06** is the production version of Move 5, where real traces replace injected faults.
+- One caution from module 02/07: the moment your agent is *optimized against* these cases (prompt tuning counts), your rubric is a reward spec — hold out some grid cells the developer never sees.
+
+---
+
 ## 4.3 Strategy 1: Synthetic Data Generation
 
 Generate test cases using LLMs or rule-based systems.
@@ -81,7 +192,7 @@ import json
 class SyntheticDataGenerator:
     """Generate synthetic evaluation data using LLMs"""
     
-    def __init__(self, model: str = "gpt-4o"):
+    def __init__(self, model: str = "gpt-5.5"):
         self.client = OpenAI()
         self.model = model
     
@@ -353,7 +464,7 @@ class DomainTransfer:
                         samples: List[dict],
                         source_domain: str,
                         target_domain: str,
-                        adapter_llm: str = "gpt-4o") -> List[dict]:
+                        adapter_llm: str = "gpt-5.5") -> List[dict]:
         """Adapt samples from one domain to another using LLM"""
         
         from openai import OpenAI
@@ -566,7 +677,7 @@ Use LLMs to create initial labels, then refine.
 │                                     ▼                                        │
 │  PHASE 2: LLM Labels                                                         │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │ Strong LLM (GPT-4) labels outputs with quality scores               │    │
+│  │ Strong LLM (e.g. GPT-5.5 / Sonnet 4.6) labels outputs w/ scores     │    │
 │  │ Labels: good/bad, scores 1-5, specific issues                       │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                     │                                        │
@@ -599,7 +710,7 @@ class BootstrapLabeler:
     """Bootstrap labels using LLM, then validate with humans"""
     
     def __init__(self, 
-                 labeling_model: str = "gpt-4o",
+                 labeling_model: str = "gpt-5.5",
                  confidence_threshold: float = 0.8,
                  num_labeling_runs: int = 3):
         self.client = OpenAI()
@@ -912,7 +1023,7 @@ class Batch(BaseModel):
     items: list[SupportTicket]
 
 resp = client.chat.completions.parse(
-    model="gpt-4o-2024-11-20",
+    model="gpt-5.5",
     response_format=Batch,
     messages=[{"role": "user", "content":
         "Generate 30 diverse customer-support tickets for a DTC apparel brand. "
@@ -943,7 +1054,7 @@ labels = [
 from anthropic import Anthropic
 a = Anthropic()
 rubric = a.messages.create(
-    model="claude-sonnet-4-5", max_tokens=600, temperature=0,
+    model="claude-sonnet-4-6", max_tokens=600, temperature=0,
     messages=[{"role": "user", "content":
         f"Here are 30 graded support-bot outputs:\n\n{labels}\n\n"
         "Infer a 5-criterion rubric (each criterion binary, with a one-sentence "
@@ -996,6 +1107,16 @@ Implement an active sampling system that:
 - Uses embedding-based diversity sampling
 - Incorporates uncertainty estimates
 - Balances exploration vs exploitation
+
+### Self-grading rubrics
+
+Anchored, per §4.2b Move 4 — the anchors describe concrete answers, including plausible weak ones.
+
+**Exercise 1** — 0: the plan is a list of module-4 strategy names with dates attached. 1: day-by-day plan with concrete counts, but generation starts before failure dimensions are enumerated (cases will cluster around remembered bugs). 2: week 1 runs the §4.2b sequence explicitly — dimensions → grid → fault-injected ground truth → anchored rubrics — and week 2's plan *depends on week 1's error clusters* ("expand whichever dimension dominates the failures"), with success criteria stated as decisions ("we know the top-2 failure modes") rather than counts ("we have 50 cases").
+
+**Exercise 2** — 0: generated 50 cases, eyeballed them, kept most. 1: used a structured critique pass (medical accuracy, realism, difficulty) and filtered, but coverage gaps are reported as topic counts only. 2: critique catches the two known synthetic-data pathologies — *textbook phrasing* (real patients say "my chest feels tight when I climb stairs," not "I am experiencing exertional angina") and *difficulty collapse* (everything answerable from the first sentence) — and the gap analysis maps cases onto a dimension × difficulty grid, naming the empty cells.
+
+**Exercise 3** — 0: uniform random sampling with an uncertainty threshold bolted on. 1: diversity (embedding clustering) and uncertainty (judge confidence / score variance) both implemented but combined ad hoc. 2: explicit budget split (e.g. 60% uncertain / 30% diverse-underrepresented / 10% pure random) with the *why*: the random slice is your unbiased drift detector — without it, an active sampler only ever confirms what it already believes is hard (§4.7's stratification logic).
 
 ---
 

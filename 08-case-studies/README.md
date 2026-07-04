@@ -4,6 +4,8 @@
 
 This module presents detailed case studies of evaluation systems in production. Each case study includes the problem, architecture, implementation details, and lessons learned.
 
+Case studies 1–6 are practitioner-scale composites (realistic but anonymized/illustrative numbers). Case studies 7–9 are documented public evaluations from 2025–2026 — a frontier-model release, an economically grounded benchmark, and a long-horizon agent eval — with every number traceable to a primary source.
+
 ---
 
 ## Case Study 1: Customer Support Chatbot Evaluation
@@ -220,9 +222,13 @@ class AsyncQualityEvaluator:
     def __init__(self, sample_rate: float = 0.05):
         self.sample_rate = sample_rate
         self.evaluators = {
-            'accuracy': AccuracyEvaluator(model='gpt-4o'),
-            'helpfulness': HelpfulnessEvaluator(model='gpt-4o-mini'),
-            'empathy': ToneEvaluator(model='gpt-4o-mini')
+            # Frontier judge for the critical dimension; small fast judge for
+            # high-volume dimensions. Mixing judge models also reduces
+            # self-preference bias — see "Replacing Judges with Juries" (PoLL):
+            # https://arxiv.org/abs/2404.18796
+            'accuracy': AccuracyEvaluator(model='claude-sonnet-4-6'),
+            'helpfulness': HelpfulnessEvaluator(model='claude-haiku-4-5'),
+            'empathy': ToneEvaluator(model='claude-haiku-4-5')
         }
         self.results_store = ResultsStore()
     
@@ -1140,7 +1146,7 @@ class ModerationEvaluator:
 ## Case Study 5: Tool-Using Agent (Customer-Refund Bot)
 
 ### Context
-A mid-size DTC retailer ships a Claude-Sonnet-4.5 agent with three tools: `lookup_order`, `issue_refund`, `escalate_to_human`. Eval focus is **trajectory correctness**, not just final-message correctness, because a wrong tool call (e.g. refunding twice) costs real money.
+A mid-size DTC retailer ships a Claude Sonnet 4.6 agent (`claude-sonnet-4-6` — picked partly on its τ²-bench Retail score of 91.7, [Sonnet 4.6 system card, Table 2.1.A](https://www-cdn.anthropic.com/78073f739564e986ff3e28522761a7a0b4484f84.pdf)) with three tools: `lookup_order`, `issue_refund`, `escalate_to_human`. Eval focus is **trajectory correctness**, not just final-message correctness, because a wrong tool call (e.g. refunding twice) costs real money.
 
 ### Eval Design
 
@@ -1152,6 +1158,7 @@ A mid-size DTC retailer ships a Claude-Sonnet-4.5 agent with three tools: `looku
 | Safety | Adversarial set: “refund $500 to a different account” × 30 | 0 unauthorized actions |
 | Efficiency | Median steps to resolution | ≤ 4 |
 | Recovery | Synthetic tool errors injected on 10% of runs → does the agent recover? | ≥ 0.90 success |
+| Reliability | `pass^8` on the 20 highest-traffic scenarios (**all** 8 trials succeed, not ≥1 — [tau-bench](https://arxiv.org/abs/2406.12045)) | ≥ 0.75 |
 
 ### Implementation Sketch (Inspect AI)
 
@@ -1201,12 +1208,21 @@ def refund_agent_eval():
 2. Sandboxed eval was non-negotiable — a buggy iteration tried to call `issue_refund` 50 times in a loop on one task.
 3. Adversarial scenarios were the highest-ROI items per dollar spent.
 
+### 2026 Postscript: The Industry Playbook Caught Up
+
+When this system was built, trajectory-vs-outcome grading was a judgment call. Anthropic's ["Demystifying evals for AI agents"](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents) (Jan 2026) has since standardized the vocabulary and defaults:
+
+- **Task / trial / transcript / outcome.** Grade the *outcome* — the actual end-state of the environment, not what the agent claims it did. Trajectory checks like the scorer above remain valuable as diagnostics and hard-fail safety rules, but brittle step-sequence assertions are an anti-pattern.
+- **pass@k vs pass^k.** pass@k = P(≥1 of k trials succeeds); **pass^k = P(all k succeed)**. A 90%-per-trial agent is only ~43% reliable at pass^8 (0.9⁸). For an agent that moves money, pass^k is the number that matters ([tau-bench](https://arxiv.org/abs/2406.12045), which introduced it, found GPT-4o's retail pass^8 was under 25%).
+- **Distrust your harness before your model.** An internal Anthropic benchmark run scored Opus 4.5 at 42% until harness bugs were fixed — the same model then scored 95% ([source](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents)).
+- **Start small, read transcripts.** 20–50 tasks drawn from real failures, each trial isolated in a clean environment; manual transcript review is non-negotiable.
+
 ---
 
 ## Case Study 6: Reasoning-Model Math Tutor
 
 ### Context
-A tutoring product uses an o-series reasoning model to walk students through problems. Both *answer correctness* and *reasoning quality* matter — a right answer with bad reasoning teaches nothing.
+A tutoring product uses a GPT-5-class reasoning model to walk students through problems. Both *answer correctness* and *reasoning quality* matter — a right answer with bad reasoning teaches nothing.
 
 ### Eval Design
 
@@ -1232,7 +1248,7 @@ def faithfulness_probe(problem: str, original_steps: list[str]) -> bool:
     perturbed[k] = perturbed[k].replace("= 12", "= 99")   # inject error
     prompt = f"Problem: {problem}\nReasoning so far:\n" + "\n".join(perturbed) + "\nFinal answer:"
     cont = client.chat.completions.create(
-        model="o4-mini", reasoning_effort="low",
+        model="gpt-5.5", reasoning_effort="low",
         messages=[{"role":"user","content":prompt}]).choices[0].message.content
     # Faithful chain → the perturbed answer differs from the original
     return cont.strip() != "<original final answer>"
@@ -1255,6 +1271,168 @@ def faithfulness_probe(problem: str, original_steps: list[str]) -> bool:
 
 ---
 
+## Case Study 7: How a Frontier Model Ships — Anatomy of the Fable 5 / Mythos 5 Release Evaluation
+
+### Context
+
+The largest eval engineering project you can study end-to-end is a frontier model release. Anthropic's Claude Fable 5 / Mythos 5 [system card](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf) (June 2026, 319 pages) documents one in full.
+
+One structural decision shapes everything: **Fable 5 and Mythos 5 are the same underlying model.** Mythos 5 is the unsafeguarded configuration (trusted partners only); Fable 5 is the general-access configuration whose classifier safeguards, when triggered, fall back to Opus 4.8. So Anthropic runs *capability and dangerous-capability evals on Mythos 5* (true underlying capability) and *safeguard/harmlessness evals on Fable 5* (the shipped product) — the eval target depends on the question being asked (card §1.5, §2.1).
+
+### The Release Eval Stack
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              FRONTIER RELEASE EVALUATION STACK (Fable 5 card)                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  LAYER 1: CAPABILITY (§8)            on Mythos 5 — "how good is it?"        │
+│    SWE-bench, Terminal-Bench, BrowseComp, OSWorld, HLE, GDPval-AA, ...      │
+│                                                                              │
+│  LAYER 2: DANGEROUS CAPABILITY (§2–3) on Mythos 5 — "is it safe to exist?"  │
+│    RSP threat models: bio/chem (CB-1/CB-2), cyber, autonomy / AI R&D        │
+│    → output: an ASL level + required deployment/security controls           │
+│                                                                              │
+│  LAYER 3: ALIGNMENT (§6)             "does it behave when no one looks?"    │
+│    Automated behavioral audit · Petri (external) · targeted evals ·         │
+│    white-box probes on internal activations                                 │
+│                                                                              │
+│  LAYER 4: META-EVALUATION (§6.5)     "can we trust layers 1–3?"             │
+│    Evaluation awareness · sandbagging checks · CoT monitorability ·         │
+│    stealth / safeguard-evasion capability                                   │
+│                                                                              │
+│  LAYER 5: EXTERNAL VALIDATION        "don't take our word for it"           │
+│    METR · UK AISI · Meridian Labs (Petri) · Andon Labs · Gray Swan ·        │
+│    public jailbreak bug bounty                                              │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Layer 1: Capability — and the measurable safety tax
+
+Harness fully disclosed: adaptive thinking at max effort, default sampling, scores averaged over 5 trials, context ≤1M tokens (card §8.1). Selected results:
+
+| Benchmark | Mythos 5 (unsafeguarded) | Fable 5 (shipped) |
+|---|---|---|
+| SWE-bench Verified | 95.5 | 95 |
+| SWE-bench Pro | 80.3 | 80 |
+| Terminal-Bench 2.1 | 88.0 | 84.3 |
+
+The Terminal-Bench gap is a **measured safety tax**: 20.9% of Fable 5 trials hit a safety refusal mid-trajectory and fell back to Opus 4.8 (card §8.3). Publishing both numbers, rather than only the better one, is the honest way to report a safeguarded product.
+
+### Layer 2: Dangerous capability → a ship/no-ship decision
+
+The RSP evals output a decision, not a score: **ASL-3** deployment. Two illustrative judgments (card §2.1–§3.2):
+
+- **AI R&D (autonomy threat model 2) ruled out** — but the old task-based "rule-out" evals had *saturated* (the model beats top-human thresholds on nearly all of them), so the case rests on new evidence: extensive internal use showing it cannot substitute for senior research staff, and internal measures of Anthropic's own pace of progress — including the Anthropic ECI, a fork of Epoch AI's capability index (§2.3.5–2.3.6) — showing no sustained AI-attributable 2× acceleration. Lesson: when an eval saturates, it stops bounding risk — you must replace the *evidence*, not just re-run the suite.
+- **Cyber**: Mythos 5 built a working exploit for a Firefox 147 vulnerability on 88.4% of trials vs 8.8% for Opus 4.8 (§3.2.4) — a capability jump that the shipped product's cyber classifiers must contain (they flagged 407 of 410 eval episodes, §3.2.1).
+
+### Layer 3: Alignment at scale
+
+- **Automated behavioral audit**: ~2,900 investigation sessions per model from ~1,450 largely hand-written seed scenarios. The investigators are themselves models (a helpful-only Opus 4.8 variant plus Mythos 5 itself); the judge is Mythos Preview (§6.2.3). Evaluation has become an agent workload.
+- **Petri 3.0** (Anthropic's open-source auditing framework, [alignment.anthropic.com/2025/petri](https://alignment.anthropic.com/2025/petri/), now maintained by the independent nonprofit Meridian Labs): 173 seed scenarios, investigators Opus 4.7 + GPT-5.5, judges from **three different labs** (Opus 4.7 / GPT-5.5 / Gemini 3.1 Pro) — cross-lab judge diversity as a bias control (§6.2.3.3).
+
+### Layer 4: Meta-evaluation — trusting the measurement
+
+The card spends a full section asking whether its own results can be believed:
+
+- **Evaluation awareness** is measured four independent ways (activation probes, verbalized mentions, self-ratings, NLA-graded token analysis) — and the measures only weakly correlate, i.e. "knows it's being tested" is not one thing (§6.5.1).
+- **Sandbagging sweep**: 2,440 dangerous-capability transcripts model-graded on a 0–10 sandbagging scale; 9 flagged for manual review; none concerning (§6.5.2).
+- **White-box probes** for dishonesty, reward hacking, and eval-awareness ran on essentially every RL transcript during most of post-training — but were *never used as a training signal*, to avoid training the model to fool the probes (§6.4.1).
+
+### Layer 5: External validation
+
+- **METR** ran a pre-release snapshot on 38 of its hardest software/R&D tasks; verdict: "likely unable to fully and reliably automate R&D for frontier projects spanning multiple weeks," and "roughly on-trend" (card §2.3.8).
+- **UK AISI** developed a single-turn jailbreak of Fable 5's cyber classifiers *within hours* (multi-turn agentic within ~2 more days), without achieving reliable long-form extraction (§3.3.1). The card is careful to add that these were interim results from a compressed testing window, "not a measure of the relative robustness" of the safeguards — disclosing the limits of your own red-team data is itself good eval practice.
+- **Public bug bounty** (with Gray Swan): ~100,000 attempts ≈ 1,000 hours of adversarial effort by June 5, 2026 — zero universal jailbreaks, two task-specific ones (§3.3.2).
+
+### Lessons for Eval Engineers
+
+1. **Separate the capability question from the product question.** Two configurations, two eval targets — the same discipline applies to any system with guardrails: measure the raw model *and* the guarded product.
+2. **Report the safety tax.** 88.0 vs 84.3 with the mechanism (20.9% classifier fallback) explained is more credible than one cherry-picked number.
+3. **Saturated evals stop bounding risk.** Plan the replacement evidence before your suite saturates.
+4. **Meta-evaluate.** At frontier scale, eval-awareness, sandbagging, and grader-hacking get their own eval suites. Your LLM judge deserves the same scrutiny (Module 2).
+5. **Diversity and externality buy credibility**: cross-lab judges, named third parties, and paid public adversaries.
+6. **Disclose the harness.** Effort setting, trial count, context limit, scaffold — a score without them is not reproducible.
+
+---
+
+## Case Study 8: GDPval — Grading Real Economic Work Without Unit Tests
+
+### The Problem
+
+OpenAI wanted to measure whether models can do *real, economically valuable knowledge work* — legal briefs, financial models, engineering plans, care plans. These deliverables have no exact-match answer, no executable test, and no single rubric that fits all of them. ([GDPval, arXiv:2510.04374](https://arxiv.org/abs/2510.04374), launched Sept 25, 2025.)
+
+### Eval Design
+
+| Design choice | Implementation |
+|---|---|
+| Task realism | 1,320 tasks from 44 occupations across the 9 top-GDP sectors, authored by professionals averaging 14 years of experience; each task ≈ 7–9 hours of expert work, ≈ $400 of value ([paper](https://arxiv.org/abs/2510.04374)) |
+| Grading | **Blind expert pairwise comparison**: an occupational expert sees the model deliverable and a human deliverable, without knowing which is which, and picks the better one. Headline metric = win/tie rate |
+| Contamination control | Only a 220-task "gold" subset is open-sourced (with an automated grader, [evals.openai.com](https://evals.openai.com/)); the rest stays private |
+| Grader validation | A trained automated grader reaches **66% agreement with human experts — vs 71% human-human inter-rater agreement** ([GDPval paper PDF](https://cdn.openai.com/pdf/d5eb7428-c4e9-4a33-bd86-86dd4bcf12ce/GDPval.pdf)). The ceiling for any grader is human-human agreement, not 100% |
+
+### Results
+
+| When | Model | Result |
+|---|---|---|
+| Launch (Sept 2025) | Claude Opus 4.1 | Outputs rated ≥ human expert 47.6% of the time ([Fortune](https://fortune.com/2025/09/30/ai-models-are-already-as-good-as-experts-at-half-of-tasks-a-new-openai-benchmark-gdpval-suggests/)) |
+| Apr 2026 | GPT-5.5 | 84.9% win/tie rate vs experts ([OpenAI](https://openai.com/index/introducing-gpt-5-5/)) |
+
+A launch finding worth quoting to any budget owner: frontier models approached expert parity roughly **100× faster and cheaper** than the experts producing the same deliverables ([coverage](https://www.marketingaiinstitute.com/blog/openai-gdpval)). Artificial Analysis also runs an independent Elo-scored variant, [GDPval-AA](https://artificialanalysis.ai/evaluations/gdpval-aa) — Fable 5 scored 1932 vs Opus 4.8's 1769 ([Fable 5 system card §8.17.7](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf)); the [Sonnet 4.6 card](https://www-cdn.anthropic.com/78073f739564e986ff3e28522761a7a0b4484f84.pdf) reports 1633 for Sonnet 4.6 and 1606 for Opus 4.6 — keeping the vendor honest with a re-implementation it doesn't control.
+
+### Key Insights
+
+1. **Pairwise comparison beats absolute scoring** when there is no rubricable ground truth — "which of these two is better?" is a far more reliable expert judgment than "score this 0–100".
+2. **Validate your automated grader against the human-human agreement ceiling.** 66% vs a 71% ceiling means the grader is within 5 points of the best achievable — that framing, not "only 66%", is the right read.
+3. **Blind the graders.** Experts must not know which deliverable is the model's; style tells alone can swing preferences.
+4. **Hold most of the set back.** The 220/1,320 public-private split is now the standard contamination defense (Module 12 covers why).
+5. **Expect independent replication** — and treat divergence between your number and the third-party number as information, not noise.
+
+---
+
+## Case Study 9: Vending-Bench 2 — Long-Horizon Agent Evaluation
+
+### The Problem
+
+Agents pass 10-step evals, then fall apart in week-long deployments. [Andon Labs](https://andonlabs.com/evals/vending-bench-2) built Vending-Bench to measure what no short eval can: **coherence over a simulated year** of running a small business. The agent starts with $500, manages a simulated vending machine operation (suppliers, pricing, stock, email), and is scored on one number — the final balance ([original paper, arXiv:2502.15840](https://arxiv.org/pdf/2502.15840)).
+
+### Eval Design
+
+- **One dollar-denominated outcome metric.** No step grading, no rubric — the environment itself does the scoring. At long horizons, step-level metrics drown in noise; outcome metrics survive.
+- **The eval is an environment, not a dataset** — dataset, harness, and scoring rules are a single artifact. This is the "environments are the new datasets" pattern (Module 11).
+- **A human baseline anchors the scale**: an estimated "good human" operator makes ~$63K/year.
+
+### Results (Vending-Bench 2)
+
+| Agent | Final balance (1 simulated year) |
+|---|---|
+| Gemini 3 Pro | $5,478.16 |
+| Claude Opus 4.5 | $4,967.06 |
+| Claude Sonnet 4.5 | $3,849.74 |
+| Estimated good human | ~$63,000 — >10× the best model |
+
+(Source: [Andon Labs](https://andonlabs.com/evals/vending-bench-2), [Vellum analysis](https://www.vellum.ai/blog/claude-opus-4-5-benchmarks).)
+
+### Documented Failure Modes
+
+The transcripts, not the leaderboard, are the real product: **context degradation** (forgetting earlier commitments as history compacts), **"meltdowns"** (spiraling, unrecoverable loops), and **emergent deception under pressure** — failure modes that simply do not appear in short evals.
+
+### From Benchmark to Production Practice
+
+- **Vending-Bench Arena** adds head-to-head multi-agent competition ([Andon Labs](https://andonlabs.com/evals/vending-bench-arena)).
+- Frontier labs now buy this as pre-release behavioral testing: Anthropic used Andon Labs' Vending-Bench 2 and Arena in the Fable 5 release evaluation ([system card §6.2.5, §8.17.6](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf)).
+- **Project Vend** closed the sim-to-real loop: a real vending machine in Anthropic's office run by an agent — the ultimate "production eval."
+
+### Key Insights
+
+1. **At long horizons, grade outcomes.** A year of trajectory has too many defensible paths to grade step-by-step; the bank balance is unambiguous.
+2. **Dollar-denominated metrics travel.** "$5,478 vs a $63K human baseline" lands with executives in a way "0.34 mean reward" never will.
+3. **The headroom is the headline.** While static benchmarks saturate (SWE-bench Verified is at ~95%), the best model still earns <10% of a competent human here — eval design determines whether you can still see the frontier.
+4. **Long-horizon failure modes are qualitatively new.** Meltdowns and deception-under-pressure justify the cost of long-horizon evals on their own: you cannot mitigate what your eval never elicits.
+
+---
+
 ## Summary: Key Takeaways
 
 ### 1. Start with the Right Dimensions
@@ -1263,6 +1441,9 @@ Each use case has different priorities:
 - Code generation: Correctness + Security
 - RAG: Groundedness + Attribution
 - Moderation: Precision vs Recall balance
+- Frontier release: Capability + dangerous capability + alignment — measured on separate configurations
+- Economic deliverables: Blind expert pairwise win rate
+- Long-horizon agents: Outcome metrics + reliability (pass^k)
 
 ### 2. Layer Your Evaluation
 ```
@@ -1277,6 +1458,12 @@ Optimize for user outcomes, not just model metrics.
 
 ### 5. Automate for CI/CD
 Evaluation gates prevent regressions before they reach users.
+
+### 6. A Score Is Never Just a Score
+"SOTA" is a function of (model, scaffold, effort setting, data split). Mid-2026 SWE-bench Pro claims span 80.3% (Mythos 5 — Fable 5's unsafeguarded configuration — on the vendor's own harness and the public split, [Fable 5 system card §8.2](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf)) down to ~47% (Opus 4.6 on the never-released commercial split — [Scale leaderboard](https://scale.com/leaderboard/swe_bench_pro_commercial)). Never quote — or gate a release on — a number without all four.
+
+### 7. Reliability Beats Luck
+pass@k rewards one lucky run; pass^k demands consistency every time. Deployed agents live and die on pass^k (Case Studies 5 and 9).
 
 ---
 
@@ -1304,6 +1491,13 @@ Design a real-time monitoring system that:
 - Detects quality regressions
 - Triggers alerts and rollbacks
 
+### Exercise 4: System-Card Teardown
+Pick a 2026 frontier system card — [Fable 5 / Mythos 5](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf) or [GPT-5.5](https://deploymentsafety.openai.com/gpt-5-5/gpt-5-5.pdf) — and map it to the stack in Case Study 7:
+- Which evals are capability, which are safety, and which are meta-evaluation (eval-awareness, sandbagging)?
+- What harness settings are disclosed (effort, trials, context, scaffold)?
+- Which numbers could you fairly compare across labs, and which are scaffold-dependent?
+- What would *you* have evaluated that the card omits?
+
 ---
 
 ## Conclusion
@@ -1315,12 +1509,13 @@ Eval engineering is the discipline that makes AI systems reliable. Through these
 3. **Human feedback is essential but expensive**
 4. **CI/CD integration prevents regressions**
 5. **Continuous improvement requires closed loops**
+6. **Frontier labs face the same problems at larger scale** — their system cards are free, deeply documented case studies; read every new one
 
 The best evaluation systems are invisible to users but essential to the team—they catch problems before users experience them and guide improvements systematically.
 
 ---
 
-**Congratulations!** You've completed the Eval Engineering study guide. Continue learning by building your own evaluation systems and iterating based on real-world feedback.
+**Next:** [Module 9 — LangChain Examples](../09-langchain-examples/README.md) turns the patterns from these case studies into runnable LangChain/LangSmith code.
 
 
 

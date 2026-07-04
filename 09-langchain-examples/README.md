@@ -65,7 +65,7 @@ class EvalConfig(BaseSettings):
     openai_api_key: str
     
     # Model settings
-    eval_model: str = "gpt-4o"  # Model for evaluation
+    eval_model: str = "gpt-5.5"  # Model for evaluation
     eval_temperature: float = 0.0  # Deterministic for evals
     
     # Cost controls
@@ -97,7 +97,7 @@ config = EvalConfig()
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 import hashlib
 import json
@@ -113,7 +113,7 @@ class BaseEvaluator(ABC):
     """Base class for all evaluators"""
     
     def __init__(self, 
-                 model: str = "gpt-4o",
+                 model: str = "gpt-5.5",
                  temperature: float = 0.0,
                  cache: Optional['EvalCache'] = None):
         self.llm = ChatOpenAI(model=model, temperature=temperature)
@@ -157,7 +157,7 @@ class BaseEvaluator(ABC):
 ```python
 # evals/evaluators/accuracy.py
 from .base import BaseEvaluator, EvalResult
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from langchain.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -236,7 +236,7 @@ Evaluate the factual accuracy and return your assessment as JSON:
 ```python
 # evals/evaluators/safety.py
 from .base import BaseEvaluator, EvalResult
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from typing import List, Dict
 import re
 
@@ -330,7 +330,7 @@ Evaluate safety and return JSON:
 ```python
 # evals/evaluators/helpfulness.py
 from .base import BaseEvaluator, EvalResult
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 
 class HelpfulnessEvaluator(BaseEvaluator):
     """Evaluate if response actually helps the user"""
@@ -400,7 +400,7 @@ Evaluate helpfulness and return JSON:
 ```python
 # evals/evaluators/rag.py
 from .base import BaseEvaluator, EvalResult
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from typing import List, Dict
 import numpy as np
@@ -408,7 +408,7 @@ import numpy as np
 class RAGEvaluator:
     """Comprehensive RAG system evaluation"""
     
-    def __init__(self, model: str = "gpt-4o"):
+    def __init__(self, model: str = "gpt-5.5"):
         self.llm = ChatOpenAI(model=model, temperature=0)
         self.embeddings = OpenAIEmbeddings()
         
@@ -622,7 +622,7 @@ import json
 class AgentEvaluator:
     """Evaluate AI agent performance"""
     
-    def __init__(self, model: str = "gpt-4o"):
+    def __init__(self, model: str = "gpt-5.5"):
         self.llm = ChatOpenAI(model=model, temperature=0)
     
     async def evaluate_trajectory(self,
@@ -756,6 +756,83 @@ Return JSON:
         response = await self.llm.ainvoke(prompt)
         return json.loads(response.content)
 ```
+
+> **⚠️ A note on the evaluator above.** It weights `tool_usage`, `efficiency`, and `reasoning` (the *path*) at 60% of the score. That was the conventional 2024 approach, but the 2026 consensus — codified in Anthropic's [Demystifying evals for AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents) (Jan 2026) — is to **grade the outcome, not the path**: "grade what the agent produced, not the path it took." Brittle step-sequence checks punish an agent for finding a *better* path than your gold trajectory. Use trajectory inspection as a *diagnostic* when an outcome fails, not as the primary score. The next subsection shows the modern pattern.
+
+### 9.4b Outcome-First Agent Evals with the Anthropic SDK (2026 pattern)
+
+Two upgrades over the LangChain example above: (1) grade the **outcome** (the actual end-state) with a deterministic check first, falling back to an LLM judge only for ambiguous cases; and (2) run **k trials per task** and report **pass^k** (all k succeed), because a deployed agent has to work *every* time, not just once. A 90%-per-trial agent is only ~59% reliable at pass^5 (0.9⁵). This example calls the Anthropic SDK directly — no LangChain wrapper — which is what you reach for when you want full control over the loop and tool schema.
+
+```python
+# evals/agent_outcome_eval.py
+# pip install anthropic
+import anthropic, asyncio, statistics
+from dataclasses import dataclass
+from typing import Callable, Any
+
+client = anthropic.AsyncAnthropic()  # reads ANTHROPIC_API_KEY
+
+@dataclass
+class AgentTask:
+    prompt: str
+    # Deterministic outcome check against the REAL end-state (DB row, file,
+    # API result) — NOT against the transcript text. Returns True on success.
+    outcome_check: Callable[[dict], bool]
+
+async def run_one_trial(task: AgentTask, tools, run_tool) -> dict:
+    """One stochastic trial. Returns the final environment state + transcript."""
+    messages = [{"role": "user", "content": task.prompt}]
+    env_state, transcript = {}, []
+    for _ in range(10):  # cap the agent loop
+        resp = await client.messages.create(
+            model="claude-fable-5",            # the agent under test
+            max_tokens=2048,
+            tools=tools,
+            messages=messages,
+        )
+        transcript.append(resp)
+        if resp.stop_reason != "tool_use":
+            break
+        # Execute each requested tool against the sandboxed environment
+        tool_results = []
+        for block in resp.content:
+            if block.type == "tool_use":
+                out = run_tool(block.name, block.input, env_state)  # mutates env_state
+                tool_results.append(
+                    {"type": "tool_result", "tool_use_id": block.id,
+                     "content": str(out)}
+                )
+        messages.append({"role": "assistant", "content": resp.content})
+        messages.append({"role": "user", "content": tool_results})
+    return {"env_state": env_state, "transcript": transcript}
+
+async def eval_task(task: AgentTask, tools, run_tool, k: int = 5) -> dict:
+    """Run k isolated trials; grade OUTCOMES; report pass@k and pass^k."""
+    # Each trial gets a fresh env so failures aren't correlated through shared infra
+    trials = await asyncio.gather(*[
+        run_one_trial(task, tools, run_tool) for _ in range(k)
+    ])
+    successes = [task.outcome_check(t["env_state"]) for t in trials]
+    n = sum(successes)
+    return {
+        "k": k,
+        "per_trial_success": n / k,
+        "pass_at_k":  1.0 if n >= 1 else 0.0,   # ≥1 of k succeeded
+        "pass_caret_k": 1.0 if n == k else 0.0, # ALL k succeeded (reliability)
+        # Keep transcripts of FAILURES only — that's where the debugging signal is
+        "failure_transcripts": [t["transcript"] for t, ok in zip(trials, successes) if not ok],
+    }
+
+# Aggregate over a suite, the way a system card reports it:
+async def eval_suite(tasks, tools, run_tool, k=5):
+    results = await asyncio.gather(*[eval_task(t, tools, run_tool, k) for t in tasks])
+    return {
+        "pass_at_k":   statistics.mean(r["pass_at_k"]   for r in results),
+        "pass_caret_k": statistics.mean(r["pass_caret_k"] for r in results),  # the honest number
+    }
+```
+
+Why this matters in practice: Claude Opus 4.5 initially scored **42%** on CORE-Bench — until an Anthropic researcher found rigid grading (penalizing "96.12" when the gold answer was "96.124991…"), ambiguous task specs, and irreproducible stochastic tasks; after fixing the bugs and loosening the scaffold, the same model scored **95%** ([ibid.](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents)). The harness, the trial isolation, and the outcome check *are* the eval. Treat a sudden score jump as a harness bug until proven otherwise.
 
 ---
 
@@ -1010,7 +1087,7 @@ def accuracy_evaluator(run, example) -> dict:
 def llm_judge_evaluator(run, example) -> dict:
     """LLM-based evaluator for LangSmith"""
     
-    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    llm = ChatOpenAI(model="gpt-5.5", temperature=0)
     
     prediction = run.outputs.get("output", "")
     question = example.inputs.get("question", "")
@@ -1089,7 +1166,7 @@ Complete example: Evaluating a customer service chatbot
 import asyncio
 import json
 from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from langchain.schema.runnable import RunnablePassthrough
 
 # 1. Define the chatbot
@@ -1103,7 +1180,7 @@ chatbot_prompt = ChatPromptTemplate.from_messages([
     ("human", "{input}")
 ])
 
-chatbot = chatbot_prompt | ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
+chatbot = chatbot_prompt | ChatOpenAI(model="gpt-5.4-mini", temperature=0.3)
 
 # 2. Define test dataset
 TEST_CASES = [
@@ -1136,7 +1213,7 @@ TEST_CASES = [
 # 3. Define evaluators
 class CustomerServiceEvaluator:
     def __init__(self):
-        self.llm = ChatOpenAI(model="gpt-4o", temperature=0)
+        self.llm = ChatOpenAI(model="gpt-5.5", temperature=0)
     
     async def evaluate_response(self, test_case: dict, response: str) -> dict:
         """Comprehensive evaluation of a CS response"""

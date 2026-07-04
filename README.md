@@ -2,7 +2,7 @@
 
 > **The Art and Science of Evaluating AI/LLM Systems at Scale**
 >
-> A comprehensive guide for software engineers and aspiring AI researchers learning to build production-grade evaluation systems for LLMs, RAG systems, and AI agents. Updated **May 2026** with the latest research and practice from Anthropic, OpenAI, the UK AI Security Institute (AISI), and the broader AI safety community.
+> A comprehensive guide for software engineers and aspiring AI researchers learning to build production-grade evaluation systems for LLMs, RAG systems, and AI agents. Updated **June 2026** with a deep pass on *how the latest frontier models were actually evaluated* — drawn from the Claude Fable 5 / Mythos 5, Opus 4.8, and Sonnet 4.6 system cards, OpenAI's GPT-5.x Preparedness work, Google's Frontier Safety Framework, plus practice from the UK AI Security Institute (AISI), METR, and the broader AI safety community.
 >
 > **Companion reading:** Hamel Husain's ["Your AI Product Needs Evals"](https://hamel.dev/blog/posts/evals/) and Eugene Yan's ["Evaluating LLM-Evaluators"](https://eugeneyan.com/writing/llm-evaluators/) are the two best practitioner essays in the field — read them alongside this guide.
 
@@ -21,7 +21,7 @@
 | [08-case-studies](./08-case-studies/) | Real-World Examples | 2 hours | Intermediate |
 | [09-langchain-examples](./09-langchain-examples/) | Python/LangChain Implementation | 3 hours | Intermediate |
 | [10-advanced-topics](./10-advanced-topics/) | Enterprise Patterns, Alignment Faking, EDDOps | 4 hours | Expert |
-| **[11-how-frontier-models-are-trained](./11-how-frontier-models-are-trained/)** | **The Complete Training Pipeline: Pretraining to RLHF to Constitutional AI** | **4 hours** | **Expert** |
+| **[11-how-frontier-models-are-trained](./11-how-frontier-models-are-trained/)** | **The Training Pipeline: Pretraining → SFT → RLHF/RLVR → Constitutional AI, and how the latest models were evaluated** | **4 hours** | **Expert** |
 | **[12-eval-training-separation](./12-eval-training-separation/)** | **Benchmark Integrity, Contamination, Dynamic Evals** | **3 hours** | **Expert** |
 | **[13-advancing-ai-research](./13-advancing-ai-research/)** | **Contributing to the Frontier: Alignment, Safety, Research Skills** | **3 hours** | **Expert** |
 
@@ -29,17 +29,18 @@
 
 ---
 
-## What's New in the 2026 Edition
+## What's New in the June 2026 Edition
 
-This guide has been substantially updated with:
+This revision is anchored on the question *"how were the newest frontier models actually evaluated?"* and threads the answer through every module:
 
-- **Module 11**: Deep dive into how frontier models (Claude Opus 4.5/Sonnet 4.5, GPT-4o/o-series, Gemini 2.x) are actually trained -- pretraining, SFT, reward modeling, RLHF, Constitutional AI, and safety fine-tuning
-- **Module 12**: Eval-training separation, benchmark contamination detection, dynamic benchmarks, and the DCR framework
-- **Module 13**: Research frontier -- alignment faking detection, open problems, how to contribute to AI safety research, and a complete path from eval engineer to AI researcher
-- **Module 10 update**: Alignment faking evaluation, sandbagging and sabotage evals, SHADE-Arena, EDDOps (Evaluation-Driven Development and Operations), self-evolving eval systems
-- **Module 02 update**: Modern LLM-as-judge practice (pairwise vs. direct, panel of judges, calibration, bias controls), agent trajectory evals, reasoning-trace / CoT-faithfulness evals, and dynamic benchmark generation
-- **Module 06 update**: Online (production) evals with async LLM-judge scoring, drift detection, and the trace → dataset → eval flywheel
-- **Latest research** from Anthropic (Constitutional AI revisions, alignment faking, sabotage evaluations, modular red-team scaffolds), UK AISI (Inspect framework), NVIDIA (front-loading reasoning), Apollo Research (scheming evals), and ICLR/NeurIPS 2025-2026
+- **Module 11 (reasoning-RL-era rewrite)**: the training pipeline updated for **RLVR (RL from verifiable rewards)**, RL environments, distillation, and training-time reward-hacking monitoring — plus an end-to-end account of how the latest generation (Claude Fable 5/Mythos 5, Opus 4.8, GPT-5.x, Gemini 3.x) was trained *and* evaluated, with corrected model dates.
+- **Module 08 (new case studies)**: a full anatomy of the **Claude Fable 5 / Mythos 5 system card** (capability + RSP/ASL-3 + alignment + Petri auditing), plus **GDPval** and **METR time-horizon** studies as worked cases.
+- **Module 02**: rubric-based grading (the **HealthBench/GDPval** pattern), reasoning-model judges, isolated per-dimension judge calls, and agent **trajectory/outcome** evals with the Anthropic task/trial/transcript/outcome vocabulary.
+- **Module 10**: the newest alignment-eval practice from the system cards — **evaluation awareness**, **grader-/reward-hacking measurement**, interpretability-assisted audits (NLAs), automated behavioral auditing (**Petri**), and third-party testing (**METR / UK AISI / Meridian / Gray Swan**).
+- **Module 12**: 2025-26 contamination findings (the **SWE-Bench Illusion**, MathArena private deltas), private holdouts in current cards, the saturated-benchmark list, and contamination-resistant agentic benchmarks.
+- **Modules 01 / 03 / 06 / 07 / 09**: **pass@k vs pass^k** reliability, **OpenTelemetry GenAI** tracing + sandboxed agent harnesses (Inspect AI / Harbor), the **trace → dataset flywheel**, agentic-coding-era CI gates, and current model IDs throughout the runnable code.
+- **Craft sections (July 2026)** — taught, not just cited: **§4.2b "From Blank Page to First 30 Cases"** (failure-taxonomy generation, grid sampling, fault-injection ground truth, anchored partial-credit rubrics, error-clustering — one dbt scenario end-to-end), **§1.4b** worked error-analysis walkthrough (open coding → axial coding → what to build), and **§2.3.6** the TPR/TNR arithmetic that a single "accuracy" number hides.
+- **Latest research** from Anthropic (reward-hacking → misalignment generalization, Petri, Constitutional AI), OpenAI (CoT monitoring, GDPval, Preparedness Framework v2), UK AISI (Inspect / ControlArena), Prime Intellect ("environments are the new datasets"), and ICLR/NeurIPS 2025-2026.
 
 ---
 
@@ -174,7 +175,7 @@ Week 3: Module 13 (Research Frontier + Project Planning)
 This guide uses:
 - **Python 3.11+**
 - **LangChain / LangGraph** for LLM and agent orchestration
-- **OpenAI API** (GPT-4o, GPT-4o-mini, o3/o4-mini reasoning models) and **Anthropic API** (Claude Opus 4.5, Sonnet 4.5, Haiku 4.5)
+- **Anthropic API** (Claude Fable 5 `claude-fable-5`, Opus 4.8 `claude-opus-4-8`, Sonnet 4.6 `claude-sonnet-4-6`, Haiku 4.5 `claude-haiku-4-5`) and **OpenAI API** (GPT-5.5, GPT-5.4-mini reasoning models) — frontier models reason by default; "effort"/"thinking budget" is a tunable knob that changes both score and cost
 - **Pydantic** for data validation and structured outputs
 - **Redis/Celery** for distributed processing
 - **GitHub Actions** for CI/CD
@@ -189,7 +190,7 @@ This guide uses:
 | **RAG-specific** | [RAGAS](https://docs.ragas.io/), [TruLens](https://www.trulens.org/), [DeepEval RAG metrics](https://github.com/confident-ai/deepeval) |
 | **Tracing standards** | [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), [OpenLLMetry / Traceloop](https://github.com/traceloop/openllmetry) |
 | **Safety / red-team** | [Inspect Evals safety suite](https://inspect.aisi.org.uk/evals/), [Garak](https://github.com/NVIDIA/garak), [PyRIT](https://github.com/Azure/PyRIT), Anthropic's [SHADE-Arena](https://alignment.anthropic.com/2025/strengthening-red-teams/) |
-| **Public leaderboards** | [Chatbot Arena (LMSYS)](https://lmarena.ai/), [LiveBench](https://livebench.ai/), [SWE-Bench Verified](https://www.swebench.com/), [GAIA](https://huggingface.co/spaces/gaia-benchmark/leaderboard), [SEAL leaderboards (Scale)](https://scale.com/leaderboard) |
+| **Public leaderboards** | [Arena (formerly LMArena/LMSYS)](https://lmarena.ai/) — note "The Leaderboard Illusion" critique; [Epoch AI Benchmarking Hub + Capabilities Index (ECI)](https://epoch.ai/benchmarks/eci); [Artificial Analysis Intelligence Index v4](https://artificialanalysis.ai/methodology/intelligence-benchmarking); [SEAL / SEAL Showdown (Scale)](https://scale.com/leaderboard); [Terminal-Bench](https://www.tbench.ai/leaderboard/terminal-bench/2.0), [LiveBench](https://livebench.ai/), [SWE-bench Verified/Pro](https://www.swebench.com/) |
 
 ---
 
@@ -228,21 +229,25 @@ By the end of this guide, you'll be able to:
 ### Key Patterns
 
 ```python
-# Pattern 1: Simple LLM-as-Judge
-score = llm.invoke(f"Rate this response 1-5: {response}")
+# Pattern 1: Binary judge + evidence (NOT "rate 1-5" — Likert scales give
+# spurious precision and poor human alignment; see module 01 §1.4d)
+verdict = llm.invoke(
+    f"Did the response resolve the user's request? "
+    f"Answer PASS or FAIL, then quote the evidence.\n\n{response}")
 
-# Pattern 2: Pairwise Comparison
-winner = llm.invoke(f"Which is better? A: {a} or B: {b}")
+# Pattern 2: Pairwise comparison — always swap positions (position bias)
+r1 = judge(f"Which is better?\nA: {a}\nB: {b}")
+r2 = judge(f"Which is better?\nA: {b}\nB: {a}")   # order swapped
+winner = a if (r1 == "A" and r2 == "B") else tie_or_rejudge(r1, r2)
 
-# Pattern 3: Rubric-Based
-scores = llm.invoke(f"Score on accuracy, helpfulness, safety: {response}")
+# Pattern 3: Rubric — one ISOLATED judge call per criterion, weighted
+# aggregation. Never one omnibus call. (module 02 §2.3.4)
+results = {c.id: judge_criterion(c, response) for c in rubric.criteria}
+score = sum(c.weight for c in rubric.criteria if results[c.id].met)
 
-# Pattern 4: Hierarchical (Cost-Optimized)
-if fast_filter.passes(response):
-    if cheap_llm.score(response) > 0.7:
-        return cheap_llm.score(response)
-    else:
-        return expensive_llm.detailed_score(response)
+# Pattern 4: Cascade — cheap screen first, strong judge only when uncertain
+s = cheap_judge.score(response)            # score once, reuse the result
+final = s if s.confidence > 0.8 else strong_judge.score(response)
 ```
 
 ### Key Metrics
@@ -326,9 +331,19 @@ This is a living document. Suggestions welcome!
 - Eugene Yan — [Evaluating LLM-Evaluators (LLM-as-Judge)](https://eugeneyan.com/writing/llm-evaluators/)
 - Shreya Shankar et al. — [Who Validates the Validators? (EvalGen)](https://arxiv.org/abs/2404.12272)
 
-### Transparency Reports
+### System Cards & Transparency Reports (primary sources for this edition)
+- [Claude Fable 5 / Mythos 5 System Card (June 2026, 319 pp)](https://www.anthropic.com/claude-fable-5-mythos-5-system-card) — the flagship case study in Module 08; capability + RSP/ASL-3 + ~120 pp alignment assessment
+- [Claude Opus 4.8 announcement (May 2026)](https://www.anthropic.com/news/claude-opus-4-8) and [Claude Sonnet 4.6 announcement (Feb 2026)](https://www.anthropic.com/news/claude-sonnet-4-6) — each links to its system card
+- [Anthropic Responsible Scaling Policy](https://www.anthropic.com/responsible-scaling-policy) and [OpenAI Preparedness Framework v2](https://cdn.openai.com/pdf/18a02b5d-6b67-4cec-ab64-68cdfbddebcd/preparedness-framework-v2.pdf)
 - [Anthropic FMTI Transparency Report (December 2025)](https://crfm.stanford.edu/fmti/December-2025/company-reports/Anthropic_FinalReport_FMTI2025.html)
-- [Claude Opus 4.5 System Card](https://assets.anthropic.com/m/64823ba7485345a7/Claude-Opus-4-5-System-Card.pdf)
+
+### Frontier model evaluation (2025–2026)
+- [Demystifying evals for AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents) — Anthropic (Jan 2026); the de-facto agent-evals playbook (task/trial/transcript/outcome, pass@k vs pass^k)
+- [GDPval](https://openai.com/index/gdpval/) and [HealthBench](https://cdn.openai.com/pdf/bd7a39d5-9e9f-47b3-903c-8b847ca650c7/healthbench_paper.pdf) — OpenAI; rubric-based and economically-grounded evals
+- [METR time horizons](https://metr.org/time-horizons/) — the "AGI progress" task-length metric used for autonomy assessment
+- [Petri: open-source automated auditing](https://www.anthropic.com/research/petri-open-source-auditing) (now maintained by Meridian Labs) and [Inspect AI / ControlArena](https://inspect.aisi.org.uk/) — UK AISI
+- [Natural Emergent Misalignment from Reward Hacking](https://arxiv.org/abs/2511.18397) — Anthropic (Nov 2025); [Chain-of-thought monitoring](https://openai.com/index/chain-of-thought-monitoring/) — OpenAI
+- [The SWE-Bench Illusion](https://arxiv.org/abs/2506.12286) and ["environments are the new datasets"](https://www.primeintellect.ai/blog/environments) — Prime Intellect
 
 ---
 

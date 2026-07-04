@@ -162,7 +162,7 @@ class ProductionSampleSource(DataSource):
 ### 3.2.2 Evaluation Orchestrator
 
 ```python
-from typing import Dict, List, Callable
+from typing import Dict, List, Callable, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import time
@@ -327,6 +327,25 @@ class EvalRun:
         }
 ```
 
+**Agent-aware orchestration: trials, not samples.** If the system under test is an *agent* (multi-step, tool-using, stochastic), the orchestrator above needs one structural change: run **k independent trials per task** and aggregate per-task, because a single run tells you almost nothing about reliability. The vocabulary standardized by Anthropic's [Demystifying evals for AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents) (Jan 2026): a **task** is the test case + success criteria, a **trial** is one stochastic run, the **transcript** is the full record including tool calls, and the **outcome** is the actual end-state of the environment — grade that, not what the agent claims. Report **pass@k** (≥1 of k trials succeeds) when one success is enough, and **pass^k** (all k succeed) when consistency matters — a 75% per-trial agent is only ~42% reliable at pass^3. Two pipeline consequences: (1) `EvalResult` gains a `trial_index` and aggregation happens per `(task_id)` group, and (2) each trial must start from a clean, isolated environment so failures aren't correlated through shared infra (see sandboxing in 3.5).
+
+```python
+@dataclass
+class TaskAggregate:
+    """Per-task aggregate over k trials of an agent eval"""
+    task_id: str
+    trials: int
+    successes: int
+
+    @property
+    def pass_at_k(self) -> bool:          # at least one success
+        return self.successes >= 1
+
+    @property
+    def pass_hat_k(self) -> bool:         # every trial succeeded (pass^k)
+        return self.successes == self.trials
+```
+
 ### 3.2.3 Result Storage and Retrieval
 
 ```python
@@ -430,6 +449,54 @@ class SQLiteResultStore(ResultStore):
         conn.close()
         
         return run_id
+    
+    def load_run(self, run_id: str) -> EvalRun:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM eval_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        if row is None:
+            conn.close()
+            raise KeyError(f"No run with id {run_id}")
+        
+        run = EvalRun(
+            name=row['name'],
+            started_at=datetime.fromisoformat(row['started_at']),
+            config=json.loads(row['config']),
+            finished_at=datetime.fromisoformat(row['finished_at'])
+                        if row['finished_at'] else None,
+            aggregates=json.loads(row['aggregates']),
+        )
+        run.results = [
+            EvalResult(
+                sample_id=r['sample_id'],
+                scores=json.loads(r['scores']),
+                model_output=r['model_output'],
+                evaluator_outputs=json.loads(r['evaluator_outputs']),
+                latency_ms=r['latency_ms'],
+                status=r['status'],
+            )
+            for r in conn.execute(
+                "SELECT * FROM eval_results WHERE run_id = ?", (run_id,)
+            )
+        ]
+        conn.close()
+        return run
+    
+    def list_runs(self, filters: Optional[dict] = None) -> List[dict]:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, name, started_at, finished_at, status "
+            "FROM eval_runs ORDER BY started_at DESC"
+        ).fetchall()
+        conn.close()
+        runs = [dict(r) for r in rows]
+        if filters:
+            runs = [r for r in runs
+                    if all(r.get(k) == v for k, v in filters.items())]
+        return runs
     
     def compare_runs(self, run_ids: List[str]) -> dict:
         """Compare metrics across multiple runs"""
@@ -577,6 +644,8 @@ class BatchEvalPipeline:
             'link': f"/evals/{run.name}"
         }
 ```
+
+**The "Git push" trigger grew teeth in 2025–2026.** Evals-as-CI-gates is now a first-class product feature rather than a custom script: [Braintrust's GitHub Action](https://www.braintrust.dev/articles/langsmith-vs-braintrust) runs the eval suite on every PR, posts score summaries as PR comments, and blocks merge when scores fall below configured thresholds. The practice pattern that goes with it ([MLAI Digital](https://www.mlaidigital.com/blogs/llm-evaluation-frameworks-2025-vs-2026-what-matters-now-2026)): a golden dataset of roughly 200–500 examples built from real production failures, with automated quality gates per pipeline stage. Treat the eval suite like a test suite — it runs on every change to prompts, retrieval config, or model version, not on a nightly cron alone.
 
 ### 3.3.2 Streaming Evaluation Pipeline
 
@@ -790,7 +859,7 @@ class StreamingEvalPipeline:
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
 │  │ LEVEL 3: Deep Evaluation (< 30s)                                     │   │
 │  │ ┌─────────────┐ ┌─────────────┐                                     │   │
-│  │ │ GPT-4 Panel │ │ Human Queue │                                     │   │
+│  │ │ Judge Panel │ │ Human Queue │                                     │   │
 │  │ │ (3 judges)  │ │ (if needed) │                                     │   │
 │  │ └─────────────┘ └─────────────┘                                     │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
@@ -813,13 +882,20 @@ class HierarchicalPipeline:
         # Level 2: Semantic evaluation
         self.level2_evaluators = {
             'similarity': EmbeddingSimilarity(),
-            'quick_judge': FastLLMJudge(model='gpt-4o-mini'),
+            'quick_judge': FastLLMJudge(model='claude-haiku-4-5'),
             'safety': SafetyClassifier()
         }
         
-        # Level 3: Deep evaluation
+        # Level 3: Deep evaluation.
+        # A panel of small, diverse judges beats a single large judge:
+        # the PoLL result (https://arxiv.org/abs/2404.18796) found a
+        # 3-judge panel of small models outperformed a single GPT-4 judge
+        # with less intra-model bias at ~1/7 the cost. Diversify vendors
+        # to dilute self-preference bias.
         self.level3_evaluators = {
-            'expert_panel': MultiJudgePanel(models=['gpt-4o', 'claude-3-opus']),
+            'expert_panel': MultiJudgePanel(
+                models=['claude-sonnet-4-6', 'gpt-5.5', 'gemini-3.1-pro']
+            ),
         }
         
         # Thresholds
@@ -873,6 +949,76 @@ class HierarchicalPipeline:
         
         return result
 ```
+
+### 3.3.4 Trace-to-Dataset Flywheel
+
+The batch and streaming patterns above treat the test set as a fixed input. The pattern that became the 2025–2026 consensus closes the loop: production traces continuously *become* new test cases. Offline evals gate releases; online evals score a sample of live traffic asynchronously; failures get clustered, triaged, and promoted into the golden set — which the CI gate then enforces forever ([OpenAI Cookbook: evaluation flywheel](https://developers.openai.com/cookbook/examples/evaluation/building_resilient_prompts_using_an_evaluation_flywheel); [LangChain, "LLM Evals"](https://www.langchain.com/articles/llm-evals)).
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     TRACE-TO-DATASET FLYWHEEL                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   ┌──────────────┐   sample    ┌──────────────┐   low-score  ┌───────────┐ │
+│   │  Production  │────────────▶│  Async LLM   │─────────────▶│  Failure  │ │
+│   │  Traces      │  (async,    │  Judge       │   traces     │  Cluster  │ │
+│   │  (OTel)      │  off the    │  (sampled)   │              │  + Triage │ │
+│   └──────────────┘  hot path)  └──────────────┘              └─────┬─────┘ │
+│          ▲                                                          │       │
+│          │                                              human       │       │
+│          │                                              approves    ▼       │
+│   ┌──────┴───────┐             ┌──────────────┐  gate   ┌───────────────┐  │
+│   │   Deploy     │◀────────────│   CI Eval    │◀────────│  Golden Set   │  │
+│   │              │  pass       │   Gate (PR)  │         │  += new rows  │  │
+│   └──────────────┘             └──────────────┘         └───────────────┘  │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+Two of the loop's stages got productized in 2025–2026 — failure clustering by [LangSmith's Insights Agent](https://latitude.so/blog/best-llm-observability-tools-agents-latitude-vs-langfuse-langsmith) (GA Oct 2025) and [Braintrust Loop](https://www.braintrust.dev/) (an AI assistant over logs that surfaces failure modes and generates scorers from plain-English descriptions) — but the promotion step should stay human-approved: a person decides which failures become permanent regression tests ([NVIDIA data-flywheel blueprint](https://github.com/NVIDIA-AI-Blueprints/data-flywheel)).
+
+```python
+class DatasetPromoter:
+    """Promote judged production failures into the versioned golden set."""
+
+    def __init__(self, test_set_manager: 'TestSetManager',
+                 score_threshold: float = 0.5):
+        self.manager = test_set_manager
+        self.score_threshold = score_threshold
+        self.candidates: List[EvalSample] = []
+
+    def ingest(self, trace: dict, judge_scores: Dict[str, float]):
+        """Called by the async judging worker for each sampled trace."""
+        if min(s for s in judge_scores.values() if s is not None) \
+                >= self.score_threshold:
+            return  # not a failure, nothing to learn
+        self.candidates.append(EvalSample(
+            id=trace['trace_id'],
+            input=trace['input'],
+            expected_output=None,        # human adds the target during triage
+            metadata={'judge_scores': judge_scores,
+                      'source_trace': trace['trace_id']},
+            category='production_failure',
+            difficulty='unknown',
+            created_at=datetime.now(),
+        ))
+
+    def review_queue(self) -> List[EvalSample]:
+        """Surface candidates for human triage (dedupe / label / reject)."""
+        return self.candidates
+
+    def promote(self, approved: List[EvalSample],
+                name: str, current_version: str) -> str:
+        """Human-approved failures become a new golden-set version (3.4.1)."""
+        existing = self.manager.load_version(current_version)
+        return self.manager.create_version(
+            name=name,
+            samples=existing + approved,
+            description=f"Promoted {len(approved)} production failures",
+        )
+```
+
+The flywheel is also where this module connects to the previous one: the failure clusters are exactly the "open coding → axial coding" error-analysis artifacts, and every promoted row should carry a human label that the LLM judge is later calibrated against ([Hamel Husain & Shreya Shankar, evals FAQ](https://hamel.dev/blog/posts/evals-faq/evals-faq.pdf)).
 
 ---
 
@@ -1039,27 +1185,27 @@ balanced_sample = sampler.sample(all_samples, n=1000, strategy='balanced')
 
 ## 3.5 Worked Examples (2026)
 
-Three pipeline patterns you can drop into a real project today.
+Four pipeline patterns you can drop into a real project today.
 
 #### Example 1 — Hosted offline-eval pipeline with Braintrust
 
-Braintrust packages dataset → task → scorers → experiment view in one API. Good fit when you want a hosted UI without building it yourself.
+Braintrust packages dataset → task → scorers → experiment view in one API. Good fit when you want a hosted UI without building it yourself. Since 2025 it also ships the CI half of the loop — a GitHub Action that posts experiment scores on PRs and blocks merge below thresholds — and [Loop](https://www.braintrust.dev/), an assistant that clusters log failures and generates scorers from plain-English descriptions.
 
 ```python
-# pip install braintrust autoevals openai
+# pip install braintrust autoevals anthropic
 from braintrust import Eval
 from autoevals import Factuality, AnswerRelevancy
-from openai import OpenAI
+from anthropic import Anthropic
 
-client = OpenAI()
+client = Anthropic()
 
 def task(input: str) -> str:
-    r = client.chat.completions.create(
-        model="gpt-4o-mini",
+    r = client.messages.create(
+        model="claude-haiku-4-5",      # cheap model under test
+        max_tokens=512,
         messages=[{"role": "user", "content": input}],
-        temperature=0,
     )
-    return r.choices[0].message.content
+    return r.content[0].text
 
 Eval(
     "support-bot-v3",            # project name in Braintrust
@@ -1076,6 +1222,8 @@ Eval(
 ```
 
 #### Example 2 — Inspect AI task graph for a multi-evaluator pipeline
+
+[Inspect AI](https://inspect.aisi.org.uk/) (UK AI Security Institute) matured into the reference open-source harness: the companion [`inspect_evals`](https://github.com/UKGovernmentBEIS/inspect_evals) repo ships 200+ prebuilt evals, and METR migrated its time-horizon suite onto Inspect in Jan 2026 ([METR Time Horizon 1.1](https://metr.org/blog/2026-1-29-time-horizon-1-1/)).
 
 ```python
 # Inspect lets you compose Solvers + Scorers — each Sample flows through them.
@@ -1094,18 +1242,39 @@ def faq_pipeline():
         scorer=[
             includes(),                              # cheap rule-based first
             match("answer", ignore_case=True),       # exact-match
-            model_graded_qa(model="openai/gpt-4o"),  # LLM-judge fallback
+            model_graded_qa(model="anthropic/claude-sonnet-4-6"),  # judge fallback
         ],
         metrics=[mean(), stderr()],
     )
 
 # Run 5 epochs to get standard error bands for non-deterministic outputs:
-# inspect eval pipeline.py --epochs 5 --model anthropic/claude-sonnet-4-5
+# inspect eval pipeline.py --epochs 5 --model anthropic/claude-sonnet-4-6
 ```
 
 #### Example 3 — OpenTelemetry-traced evaluator (vendor-neutral)
 
 Emit GenAI-conventions traces so the same evaluator works against Phoenix, Langfuse, LangSmith, or Braintrust by swapping the OTel exporter — no code changes.
+
+The [OTel GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) became the de facto trace schema for LLM systems in 2025–2026, and they matter to pipeline design because your eval pipeline and your production observability can now share one span format. The taxonomy ([OTel GenAI observability blog, 2026](https://opentelemetry.io/blog/2026/genai-observability/); [agent-spans spec](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/)):
+
+```
+invoke_agent  (top-level agent span)
+ ├── chat            (one span per LLM call)
+ │     gen_ai.request.model, gen_ai.usage.input_tokens / output_tokens,
+ │     gen_ai.response.finish_reasons, gen_ai.system_instructions,
+ │     gen_ai.input.messages, gen_ai.output.messages
+ └── execute_tool    (one span per tool invocation)
+```
+
+| Attribute | What it carries | Why evals care |
+|---|---|---|
+| `gen_ai.request.model` | requested model id | slice scores by model/version |
+| `gen_ai.usage.input_tokens` / `output_tokens` | token counts | cost-per-eval, judge-cost budgets |
+| `gen_ai.response.finish_reasons` | stop / length / tool_use … | detect truncation masquerading as failure |
+| `gen_ai.input.messages` / `gen_ai.output.messages` | full conversation payloads | replay traces as eval samples (flywheel, 3.3.4) |
+| `gen_ai.system_instructions` | system prompt | catch prompt-version drift between runs |
+
+One honest caveat for anything you build on this: as of mid-2026 the GenAI conventions are **still marked "Development" (experimental), not stable** — there is no committed stabilization timeline, and you opt into the latest experimental version via an environment variable ([gen-ai semconv](https://opentelemetry.io/docs/specs/semconv/gen-ai/); [Greptime explainer, May 2026](https://greptime.com/blogs/2026-05-09-opentelemetry-genai-semantic-conventions)). Vendors adopted them anyway — MLflow documents native GenAI-semconv tracing ([mlflow.org](https://mlflow.org/docs/latest/genai/tracing/opentelemetry/genai-semconv/)), and Claude Code trace support is noted as beta in the OTel blog. Practical consequence: pin the semconv version in your pipeline config and treat attribute renames as a schema migration, exactly like a DB.
 
 ```python
 # pip install opentelemetry-api opentelemetry-sdk openinference-instrumentation-openai
@@ -1130,7 +1299,7 @@ def evaluate_one(sample):
         span.set_attribute("eval.sample_id", sample["id"])
         span.set_attribute("eval.suite", "faq-v3")
         out = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5.5",
             messages=[{"role": "user", "content": sample["input"]}],
         ).choices[0].message.content
         score = float(sample["expected"].lower() in out.lower())
@@ -1138,11 +1307,89 @@ def evaluate_one(sample):
         return score
 ```
 
-The three examples above cover the **three deployment shapes** you will actually encounter: hosted SaaS (Braintrust), self-hosted research-grade (Inspect AI), and vendor-neutral OSS observability (OpenTelemetry). Pick one for offline + CI; pair with an online tracing backend for production (see module 06).
+#### Example 4 — Sandboxed agent-eval pipeline (Inspect AI + Docker)
+
+Everything earlier in this module assumed the system under test only *returns text*. Agent evals break that assumption: the agent runs shell commands, edits files, and mutates state — so the pipeline must provide an **isolated, disposable environment per trial**. Three reasons this is non-negotiable:
+
+1. **Safety** — an agent that can run `rm -rf` or exfiltrate credentials must not do it on the eval host.
+2. **Statistical validity** — trials that share an environment have correlated failures (one trial's leftover files break the next), corrupting pass@k/pass^k estimates. Anthropic's agent-evals guidance is explicit: isolate each trial in a clean environment ([Demystifying evals for AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents)).
+3. **Outcome grading** — to "grade what the agent produced, not the path it took," the scorer must inspect the *end state of the environment*, which requires owning that environment.
+
+This is how the serious benchmarks are built: Terminal-Bench 2.0's 89 hand-crafted, human-verified terminal tasks each run in isolated Docker containers — and frontier models still fail 18–35% of them ([Terminal-Bench paper, ICLR 2026](https://openreview.net/pdf?id=a7Qa4CcHak)). Its official harness, [Harbor](https://harborframework.com/docs/running-tbench), is an open-source framework for container-based agent rollouts that can drive Claude Code, Codex CLI, OpenHands, and Mini-SWE-Agent. Inspect AI ships the same capability natively via its sandbox abstraction, plus [ControlArena](https://www.aisi.gov.uk/blog/our-2025-year-in-review) for control/sabotage evals.
+
+```python
+# pip install inspect-ai   (plus Docker running locally)
+from inspect_ai import Task, task
+from inspect_ai.agent import react
+from inspect_ai.dataset import Sample
+from inspect_ai.scorer import scorer, Score, accuracy, stderr, Target
+from inspect_ai.solver import TaskState
+from inspect_ai.tool import bash, text_editor
+from inspect_ai.util import sandbox
+
+@scorer(metrics=[accuracy(), stderr()])
+def tests_pass():
+    """Outcome-first grading: run the test suite INSIDE the sandbox
+    and grade the end state — never trust the agent's own claim."""
+    async def score(state: TaskState, target: Target) -> Score:
+        result = await sandbox().exec(
+            ["python", "-m", "pytest", "/workspace/tests", "-q"],
+            timeout=120,
+        )
+        return Score(
+            value=1.0 if result.success else 0.0,
+            explanation=result.stdout[-2000:],   # keep evidence for triage
+        )
+    return score
+
+@task
+def fix_failing_build():
+    return Task(
+        dataset=[
+            Sample(
+                input="The test suite in /workspace is failing. "
+                      "Find the bug and fix it. Do not modify the tests.",
+                files={"/workspace": "fixtures/broken_project.zip"},
+            ),
+        ],
+        solver=react(tools=[bash(timeout=180), text_editor()]),
+        scorer=tests_pass(),
+        sandbox="docker",          # fresh container per trial, torn down after
+    )
+
+# 5 trials per task -> pass@5 and pass^5 from one run:
+# inspect eval agent_pipeline.py --epochs 5 --model anthropic/claude-sonnet-4-6
+```
+
+**Your harness is part of the system under test.** Two cautionary tales from frontier-lab pipelines. First, Claude Opus 4.5 initially scored 42% on CORE-Bench — until an Anthropic researcher found rigid grading, ambiguous task specs, and irreproducible stochastic tasks in the harness; with the bugs fixed and a less constrained scaffold, the same model scored 95% ([Demystifying evals for AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents)). Second, the Fable 5 system card switched Terminal-Bench 2.1 to the mini-SWE-agent harness because the previous Terminus-2 harness hit 2.7× more timeouts at the highest effort setting — and reports Fable 5 at 84.3% mean reward *with 20.9% of trials hitting a safety refusal and falling back to Opus 4.8 mid-trajectory* ([Fable 5 system card §8.3](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf)). If the best-resourced eval teams in the industry see double-digit score swings from harness choice, timeouts, and safeguard fallbacks, budget pipeline-debugging time accordingly: log per-trial infra errors separately from task failures, and treat a sudden score change as a harness bug until proven otherwise.
+
+The four examples above cover the **deployment shapes** you will actually encounter: hosted SaaS (Braintrust), self-hosted research-grade (Inspect AI), vendor-neutral OSS observability (OpenTelemetry), and sandboxed agent rollouts (Inspect + Docker / Harbor). Pick one for offline + CI; pair with an online tracing backend for production (see module 06).
 
 ---
 
-## 3.6 Exercises
+## 3.6 Tooling Landscape (mid-2026)
+
+You will rarely build every box in the 3.1 diagram yourself. What changed in 2025–2026, tool by tool:
+
+| Tool | What changed 2025–2026 | Source |
+|---|---|---|
+| **Inspect AI** (UK AISI) | 200+ prebuilt evals in `inspect_evals`; agent/multi-agent support, sandboxing, ControlArena; Bayesian evaluator-reliability stats; community-eval registry with automated review from May 2026 | [inspect.aisi.org.uk](https://inspect.aisi.org.uk/), [inspect_evals](https://github.com/UKGovernmentBEIS/inspect_evals) |
+| **LangSmith** | Align Evals judge-calibration loop (Jul 2025); Insights Agent failure clustering (GA Oct 2025) | [Align Evals](https://blog.langchain.com/introducing-align-evals/) |
+| **Braintrust** | Loop (clusters log failures, generates scorers from plain English); CI GitHub Action with merge blocking; remote evals | [braintrust.dev](https://www.braintrust.dev/) |
+| **Langfuse** (OSS) | Managed LLM-as-judge evaluators on traces/experiments; observation-level judge evals (Feb 2026) for per-tool-call precision; OTel integration | [docs](https://langfuse.com/docs/evaluation/evaluation-methods/llm-as-a-judge), [changelog](https://langfuse.com/changelog/2026-02-13-observation-level-evals) |
+| **Arize Phoenix** (OSS) | OpenTelemetry-native tracing + LLM-judge evals; the OTel-first option | [comparison](https://www.comet.com/site/blog/llm-evaluation-frameworks/) |
+| **W&B Weave** | Rebuilt for production agents: online evaluations on live traffic (preview), Guardrails scorers (toxicity, PII, hallucination) | [announcement](https://wandb.ai/wandb_fc/product-announcements-fc/reports/New-in-W-B-Weave-Observability-and-continuous-improvement-for-production-agents--VmlldzoxNzAzMTcxNg) |
+| **DeepEval** (Confident AI) | "Pytest for LLMs"; DAG metric (deterministic LLM decision trees with hard-coded leaf scores); conversational metrics | [docs](https://deepeval.com/docs/metrics-introduction) |
+| **Promptfoo** | Security/red-team focus; **OpenAI announced acquisition Mar 9, 2026** (stays open source, integrates into OpenAI Frontier) | [openai.com](https://openai.com/index/openai-to-acquire-promptfoo/) |
+| **Harbor** | Container-based agent rollouts; official Terminal-Bench 2.0 harness; drives Claude Code, Codex CLI, OpenHands | [harborframework.com](https://harborframework.com/docs/running-tbench) |
+
+The stack pattern that recurs across 2026 comparisons: an **OSS framework (DeepEval / Promptfoo / Inspect) for PR-level CI checks** plus a **commercial platform (LangSmith / Braintrust / Weave) for production trace annotation, dataset management, and audit** ([Confident AI comparison](https://www.confident-ai.com/knowledge-base/compare/top-langsmith-alternatives-and-competitors-compared)). The Promptfoo acquisition is also a consolidation signal worth registering: eval tooling is being pulled into the model vendors themselves — keep your golden sets and result schemas portable (plain JSONL + OTel spans) so the pipeline survives a vendor change.
+
+One more 2026 shift that affects architecture: **graders are converging with training infrastructure.** OpenAI's platform exposes grader objects (python graders, score-model graders, multigraders) shared between its Evals API and reinforcement fine-tuning jobs ([graders guide](https://developers.openai.com/api/docs/guides/graders)), and Prime Intellect's `verifiers` library treats RL environments and evals as one artifact — dataset + harness + scoring ([Environments Hub](https://www.primeintellect.ai/blog/environments)). If your evaluators may someday double as reward functions, every grader is a reward spec — red-team it like one (modules 10 and 12 cover reward hacking and eval–training separation in depth).
+
+---
+
+## 3.7 Exercises
 
 ### Exercise 1: Build a Complete Pipeline
 Implement a batch evaluation pipeline with:
@@ -1164,6 +1411,13 @@ Design a comprehensive data schema for storing evaluation results that supports:
 - Aggregation by category
 - Drill-down to individual samples
 - Historical trending
+
+### Exercise 4: Sandboxed Agent Eval
+Using Inspect AI (or Harbor), build an agent eval that:
+- Gives the agent `bash` + file-editing tools inside a Docker sandbox
+- Grades the *outcome* (environment end-state) rather than the agent's transcript claims
+- Runs 5 trials per task and reports both pass@5 and pass^5
+- Separates infra errors (container/timeout failures) from genuine task failures in its report — then deliberately introduce a harness bug (e.g., a too-short tool timeout) and measure how much it moves your score
 
 ---
 
