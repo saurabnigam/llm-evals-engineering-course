@@ -54,6 +54,36 @@ Feedback loops are the mechanism by which your evaluation system learns and impr
 
 Direct signals from users about output quality.
 
+> #### ⚠️ Before you compute a thumbs-up rate: it is not a satisfaction metric
+>
+> Explicit feedback is the most-collected and most-misread signal in AI products, because the population that clicks is not the population that used the feature. Typical in-product response rates run **1–5%**, and clicking is driven by emotional intensity — annoyance mostly, delight occasionally. The silent 95% are the users your metric is supposed to be about.
+>
+> The arithmetic is worth doing once, because it is more distorting than intuition suggests:
+>
+> ```python
+> # 10,000 sessions. True quality: 90% of users are satisfied.
+> # But dissatisfied users are 5x more likely to bother clicking.
+> sessions, true_satisfaction = 10_000, 0.90
+> satisfied, dissatisfied = 9_000, 1_000
+> rate_satisfied, rate_dissatisfied = 0.02, 0.10      # 2% vs 10% click-through
+>
+> up   = satisfied * rate_satisfied        # 180
+> down = dissatisfied * rate_dissatisfied  # 100
+> print(f"observed thumbs-up rate: {up / (up + down):.1%}")   # 64.3%
+> print(f"actual satisfaction:     {true_satisfaction:.1%}")  # 90.0%
+> print(f"total responses: {up + down} ({(up + down) / sessions:.1%} of sessions)")
+> ```
+>
+> **A genuinely 90%-good product reports 64% thumbs-up.** Nothing is broken; the metric is measuring who clicks, not what happened. Three consequences:
+>
+> | Trap | Why it happens | What to do instead |
+> |---|---|---|
+> | Reading the level as satisfaction | Responders over-represent the dissatisfied | Track the **trend**, not the level — bias is roughly stable, so week-over-week movement is informative even when the absolute number isn't |
+> | Comparing across surfaces or releases with different UI | Moving the button changes the response rate, which changes the metric with no quality change | Only compare within an unchanged UI; treat a feedback-UI change as a **metric break**, like a schema migration |
+> | Treating it as an eval | It is a biased sample with no ground truth | Use it to **route attention** — thumbs-down are a sampling signal for what to label — and let the labeled eval set carry the measurement |
+>
+> **The one use that is unambiguously good:** thumbs-down as a *queue*. A user who took the trouble to click has flagged a case worth a human look, and those cases are the highest-yield source of new golden-set examples (§6.3, and the trace-to-dataset flywheel in Module 03 §3.3.4). Use the signal for retrieval, not for arithmetic.
+
 ```python
 from dataclasses import dataclass
 from datetime import datetime
