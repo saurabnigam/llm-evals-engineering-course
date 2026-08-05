@@ -64,10 +64,29 @@ Per-call costs are *derived*, not quoted — always compute them from per-millio
 | `claude-haiku-4-5` | $1.00 | $5.00 | Tier-1 screener, high-volume checks |
 | `claude-sonnet-4-6` | $3.00 | $15.00 | Default production judge |
 | Claude Sonnet 5 | $2.00 (intro) | $10.00 (intro) | Judge candidate — intro pricing through Aug 31, 2026, then $3/$15 |
-| `claude-opus-4-8` | $5.00 | $25.00 | Final-tier judge for ambiguous samples |
+| `claude-opus-5` | $5.00 | $25.00 | Default arbiter / final-tier judge — same price as Opus 4.8 |
+| `claude-opus-4-8` | $5.00 | $25.00 | Prior-generation arbiter; useful as an A/B baseline and refusal fallback |
 | `claude-fable-5` | $10.00 | $50.00 | Capability evals — almost never a judge |
 
 Prices verified July 2026 against the [Claude pricing docs](https://platform.claude.com/docs/en/docs/about-claude/pricing); always re-check, as prices change. Opus 4.8 fast mode is **$10/$50** — double the standard $5/$25 for the *same* model, so the speed knob is a cost lever, not just a latency one ([launch post](https://www.anthropic.com/news/claude-opus-4-8)). Two more cost gotchas from the same docs: (1) **tokenizer drift** — Opus 4.7+, Fable/Mythos 5, and Sonnet 5 use a newer tokenizer that produces **~30% more tokens for the same text**, so per-call costs don't scale down from older models the way the list price suggests; (2) **Batch API is a flat 50% off** input and output for every model. Worked example: a Sonnet 4.6 judge call at 2,000 input + 250 output tokens costs 2,000 × $3/1M + 250 × $15/1M ≈ **$0.0098**.
+
+#### The prompt-cache minimum: a silent 90% discount you can miss entirely
+
+Prompt caching is the largest single lever in an eval harness, because a judge re-sends the same rubric on every call — cache reads bill at roughly **0.1×** input price. But a cached prefix must clear a **minimum token count**, and below it nothing caches: no error, no warning, just `cache_creation_input_tokens: 0` and a full-price bill.
+
+The minimum is **not monotonic across model generations**, which is what catches people:
+
+| Model | Minimum cacheable prefix |
+|---|---:|
+| Claude Opus 5, Fable 5 | **512 tokens** |
+| Opus 4.8, Sonnet 5, Sonnet 4.6 | 1,024 tokens |
+| Opus 4.7 | 2,048 tokens |
+| Opus 4.6, Haiku 4.5 | **4,096 tokens** |
+
+A 3,000-token judge prompt caches on Opus 5 and Sonnet 5, and **silently does not cache on Haiku 4.5** — the exact model you chose to save money. Two consequences for harness design:
+
+1. **Assert on the cache, don't assume it.** `assert resp.usage.cache_read_input_tokens > 0` in your harness turns a silent cost leak into a loud failure. Classic invalidators: a timestamp or run-ID in the system prompt, `json.dumps()` without `sort_keys=True`, and a tool list whose order varies between runs.
+2. **Re-check prompts you previously wrote off.** Judge prompts that were too short to cache on an older model may now cache on Opus 5 — with no code change beyond the model string.
 
 A 2026 heuristic for when to invest in the optimizations below: if judge spend exceeds roughly 10% of your total LLM bill, distill a smaller judge or sample by failure signal ([Confident AI](https://www.confident-ai.com/blog/llm-agent-evaluation-complete-guide) — treat the exact threshold as folklore, not a law).
 
