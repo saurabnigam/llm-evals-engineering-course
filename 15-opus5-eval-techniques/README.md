@@ -10,6 +10,22 @@
 
 ---
 
+## In Plain English (start here if you don't write the code)
+
+An **eval harness** is the test suite for an AI feature: a set of saved examples, run against the model, scored automatically. The models changed underneath these harnesses in 2026, and three of the changes matter to anyone who reads the resulting numbers — not just to the people maintaining the code.
+
+**1. AI test results are now a range, not a number.** Harnesses used to have a setting that made the model behave as consistently as possible; that setting no longer exists, and it never worked as well as people believed. So the same test suite run twice gives slightly different answers. This is not a bug to be fixed — it is how the technology works, and the fix is to report results the way medicine reports trial results: an estimate plus a margin of error.
+
+The practical consequence is uncomfortable and worth internalizing: **a 100-example test suite genuinely cannot tell 87% apart from 79%.** If your team argues about whether a four-point movement is real, the answer is usually "there is no way to know" — the suite is too small. Detecting a five-point change reliably takes roughly 900 examples.
+
+**2. The model has a "how hard should I think" dial.** It runs from low to max, and it changes both quality and cost — often dramatically, and not proportionally. In a typical measurement, the first twelve points of quality cost about 32¢ each and the last one costs $41.75. So "which setting should we use" is an arithmetic question with a defensible answer, and any quality claim that doesn't say which setting was used is not checkable.
+
+**3. Sometimes the model declines to answer, and that is not a failing grade.** Safety systems occasionally refuse a request. If the test harness records those as failures, the scores drop in exactly the topic areas the refusals cluster in — so you conclude the model is bad at something it was simply never allowed to attempt. The correct handling is a third category — **unmeasured** — reported alongside a *coverage* figure: "91% pass, on 99.8% of cases measured" is evidence; "91% pass, 71% measured" is not.
+
+The rest of the module is how to implement all of this, plus how to run a large test suite for roughly a tenth of the obvious cost. **Terms you'll meet:** *judge* — a model scoring another model's output. *effort* — the think-harder dial. *coverage* — the share of test cases that produced a real result. *contamination* — when the system under test has somehow seen the answers.
+
+---
+
 ## 15.1 The Model Landscape for Eval Harnesses
 
 | Model | ID | Context | Max output | Input / Output per MTok | Where it belongs in an eval stack |
@@ -100,7 +116,7 @@ detect a  5% drop from 85%: n=906 per arm
 detect a  2% drop from 85%: n=5,274 per arm
 ```
 
-That table is the honest answer to "how big should our eval set be", and it explains why serious CI gates are set at loose thresholds on small suites and tight thresholds only on large ones. **Publish the MDE of your eval suite next to its pass rate.** A gate that fires on a 3-point drop over 150 cases is a random-number generator wearing a lab coat.
+That table is the honest answer to "how big should our eval set be", and it explains why serious CI gates are set at loose thresholds on small suites and tight thresholds only on large ones. **Publish the MDE of your eval suite next to its pass rate** — the *minimum detectable effect* is the smallest change your suite can reliably tell apart from noise, and a gate set tighter than its own MDE is firing on randomness. A gate that fires on a 3-point drop over 150 cases is a random-number generator wearing a lab coat.
 
 ### Two variance-related consequences
 

@@ -1450,6 +1450,8 @@ The transcripts, not the leaderboard, are the real product: **context degradatio
 
 > Source: a talk by **Soumya Gupta** and **Jai Chopra** (Uber) on the multimodal agent that enhances food photography on Uber Eats. Architecture, stage boundaries, and design principles below follow their account; **all numbers in this section are illustrative** unless a source is cited — treat them as worked arithmetic, not reported Uber metrics.
 
+> **In plain English:** Uber Eats wanted to make merchants' food photos look better without ever showing food the merchant doesn't actually serve, and without making every restaurant's photos look identical. That combination — improve it, don't lie, don't homogenize — is why this is hard to *measure*, not just hard to build. Three lessons generalize far beyond food photos: a filter makes the mistakes it *blocks* invisible to you; some rules must be absolute rather than one factor among many; and three safety checks that all work the same way are really just one safety check.
+
 ### The Problem
 
 Hundreds of thousands of independent merchants upload their own food photos. Many are bad in ways that cost the merchant orders — dim lighting, cluttered composition, bad crop, phone-flash glare. A better photo lifts conversion. But the obvious fix (regenerate the image) is unacceptable: the picture is a **commercial claim about what arrives in the bag**. And a marketplace where every photo has been pushed toward the same "good food photo" prior is a marketplace that has erased the thing that makes it a marketplace.
@@ -1655,7 +1657,7 @@ Three things this structure buys you that a single omnibus "rate this edit 1–5
 | realism | 400 | 0.91 | 0.83 | 0.74 |
 | plating | 400 | 0.72 | 0.69 | 0.44 |
 
-*(Illustrative.)* Read the last row honestly: κ = 0.44 on plating means the gate and your human raters **substantially disagree about what good plating is**. That is not necessarily a bug — it may mean your annotation guideline is underspecified — but it does mean a plating score is not yet evidence for a launch decision, while a faithfulness verdict (κ = 0.81) is. Different criteria earn different levels of trust, and your dashboard should say which.
+*(Illustrative.* **κ** *— Cohen's kappa — measures how much the gate and a human agree beyond what random guessing would produce: 1.0 is perfect agreement, 0 is coin-flip. Roughly: ≥0.8 is strong, 0.6–0.8 is usable, below 0.4 means the two are effectively measuring different things.)* Read the last row honestly: κ = 0.44 on plating means the gate and your human raters **substantially disagree about what good plating is**. That is not necessarily a bug — it may mean your annotation guideline is underspecified — but it does mean a plating score is not yet evidence for a launch decision, while a faithfulness verdict (κ = 0.81) is. Different criteria earn different levels of trust, and your dashboard should say which.
 
 #### Stage 3 — Swiss cheese, and the correlation that quietly eats it
 

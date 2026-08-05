@@ -8,6 +8,23 @@
 
 ---
 
+## In Plain English (start here if you don't write the code)
+
+A **loop** is a system that checks its own work and tries again when it isn't happy. It writes a draft, something inspects the draft, and if the draft fails inspection it writes another one — up to some limit. Most AI products now work this way, because it is the cheapest way to turn a system that is right 70% of the time into one that is right 90% of the time.
+
+This module is about a question that sounds simple and almost nobody can answer about their own product: **is the checking actually helping, and what is it costing?**
+
+Four ideas carry the whole module, and none of them require reading a line of code:
+
+1. **The checker is the whole ballgame.** If the inspector is unreliable, retrying makes things *worse*, not better — it throws away good work and lets bad work through, while tripling the bill. A loop is never better than the thing judging it.
+2. **"It passed eventually" hides everything.** A product that succeeds 91% of the time might get 88% of that on the first try, with the retries adding almost nothing while adding most of the cost. Same headline number, completely different business decision.
+3. **Trying again can make things worse.** Sometimes the third draft is worse than the first — the system "improves" itself into a worse answer. This is common, it is measurable, and virtually no team measures it.
+4. **Log the reason, not just the failure.** "This failed" is useless. "This failed because the lighting check rejected it" is a work item with an owner. Everything else in this module depends on that one habit.
+
+The rest of the module makes each of these measurable. **Terms you'll meet:** *pass@k* — did it succeed within k tries? *pass^k* — did it succeed on *every* one of k tries (the honest measure of reliability)? *gate* or *verifier* — the automated checker. *escalation* — handing a failure to a human.
+
+---
+
 ## 14.0 Why This Module Exists
 
 Here is the failure that motivates loop engineering as a discipline.
@@ -209,7 +226,12 @@ Two design choices in there are load-bearing and frequently omitted in real syst
 
 This is the theoretical core of the module, and it explains why some loops work spectacularly and others make things worse.
 
-Let generation succeed with probability *p*, and let the verifier have true-positive rate *TPR* (catches a real defect) and false-positive rate *FPR* (rejects a good output). After a rejection you retry. What does the loop actually deliver?
+Let generation succeed with probability *p*. The verifier has two error rates, and the whole argument turns on keeping them separate:
+
+- **TPR** (true-positive rate) — how often it **catches a genuinely bad output**. Low TPR = defects slip through.
+- **FPR** (false-positive rate) — how often it **rejects a perfectly good output**. High FPR = good work thrown away and re-done, which is where loop cost comes from.
+
+After a rejection you retry. What does the loop actually deliver?
 
 ```python
 def loop_quality(p_generate: float, tpr: float, fpr: float, k: int) -> dict:
@@ -258,7 +280,7 @@ Worse, the mechanism of the collapse is invisible in aggregate metrics. Look at 
 
 Three practical corollaries:
 
-1. **Evaluate the verifier before you deploy the loop.** Gate precision/recall against human labels (Module 02 §2.3.6) is a *prerequisite*, not a nice-to-have. A gate with κ < 0.4 should not be allowed to reject anything.
+1. **Evaluate the verifier before you deploy the loop.** Gate precision/recall against human labels (Module 02 §2.3.6) is a *prerequisite*, not a nice-to-have. A gate with κ < 0.4 — Cohen's kappa, agreement with human judgment beyond chance, where 1.0 is perfect and 0 is a coin flip — should not be allowed to reject anything.
 2. **Prefer verification tasks that are structurally easier than generation.** Running the test suite is a strictly easier problem than writing the code; checking whether an edited image added a garnish is strictly easier than producing the edit. When you cannot find an asymmetric verifier, you probably do not have a loop — you have a resampler.
 3. **A resampler is a legitimate design, but call it one.** If your "verifier" is just the generator scoring itself, you are drawing best-of-K samples. That is fine and often effective — but its metric is best-of-K quality, not self-correction, and it does not justify a critique channel.
 

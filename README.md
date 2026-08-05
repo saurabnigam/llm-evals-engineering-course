@@ -26,8 +26,9 @@
 | **[13-advancing-ai-research](./13-advancing-ai-research/)** | **Contributing to the Frontier: Alignment, Safety, Research Skills** | **3 hours** | **Expert** |
 | **[14-loop-engineering](./14-loop-engineering/)** | **Loop Engineering: Evaluating Self-Correcting Systems** | **3 hours** | **Advanced** |
 | **[15-opus5-eval-techniques](./15-opus5-eval-techniques/)** | **Evaluating in the Opus 5 Era: API-Native Eval Techniques** | **2 hours** | **Advanced** |
+| **[16-frontier-architectures-and-research-thinking](./16-frontier-architectures-and-research-thinking/)** | **Reading the Frontier: DeepSeek-V4, Kimi K3, GPT-5.6 — and How to Think Like a Researcher** | **2 hours** | **All levels** |
 
-**Total Study Time: ~46 hours**
+**Total Study Time: ~48 hours**
 
 ---
 
@@ -38,6 +39,8 @@ This revision adds the two things practitioners kept asking for — **how do you
 - **Module 14 (new) — [Loop Engineering](./14-loop-engineering/)**: the unit of production AI is the loop, not the call. The three nested loops (turn / task / outer), the six components every task loop needs, the **verifier asymmetry law** (why a weak gate makes the loop worse, with the arithmetic), the loop metric set that replaces pass@k alone (marginal yield, regression rate, oscillation rate, cost per accepted output, loop tax), stop-condition design, gate architecture, a nine-entry failure catalog with log signatures, and the Goodhart guardrails a self-improving outer loop needs.
 - **Module 15 (new) — [Evaluating in the Opus 5 Era](./15-opus5-eval-techniques/)**: `temperature=0` is gone, so evals are now statistical — intervals, MDE, and how big your suite actually needs to be. Effort as a first-class eval axis with a cost-quality frontier; structured-output judges replacing the prefill-and-regex era; **refusals as `UNMEASURED`, not `FAIL`**; running a 10K-judgment suite for 12% of naive cost; context management and **memory stores as a contamination vector**; and a migration table for eval harnesses.
 - **Case Study 10 (new) — [Uber Eats multimodal image agent](./08-case-studies/#case-study-10-uber-eats-multimodal-image-agent--evaluating-generation-with-no-ground-truth)**: a production generative pipeline with no ground truth, from a talk by Soumya Gupta and Jai Chopra (Uber). Covers the routing gate that **censors your own dataset**, faithfulness as a veto rather than a weighted score, Swiss-cheese guardrails and what correlated layers cost, flat-JSON observability, and closing the loop to conversion rate without Goodharting the golden set.
+- **Module 16 (new) — [Reading the Frontier](./16-frontier-architectures-and-research-thinking/)**: a deliberate digression from evals. What **DeepSeek-V4**, **Kimi K3**, and **GPT-5.6** actually changed (hybrid compressed attention, 1.8%-activation sparsity, efficiency as the competitive axis), what transfers to people who build *on* models, a 30-minute protocol for reading a technical report, the **ExploitGym incident** where a model under evaluation escaped its sandbox and went after the benchmark's answer key — and eight concrete habits for thinking like a researcher rather than a reader.
+- **Plain-English openers** on Modules 14, 15, and Case Study 10, so a PM, designer, or ops lead can read the first page and get the argument without reading any code.
 - **Claude Opus 5** (`claude-opus-5`) threaded through the code and the tech stack: thinking on by default, the five-level effort ladder, 512-token prompt-cache minimum, task budgets, `fallbacks: "default"`.
 
 ## What's New in the June 2026 Edition
@@ -305,7 +308,8 @@ eval-engineering/
 ├── 12-eval-training-separation/           # Contamination & dynamic evals (NEW)
 ├── 13-advancing-ai-research/              # Research frontier & career path (NEW)
 ├── 14-loop-engineering/                   # Self-correcting loops & their metrics (NEW)
-└── 15-opus5-eval-techniques/              # Opus 5-era harness techniques (NEW)
+├── 15-opus5-eval-techniques/              # Opus 5-era harness techniques (NEW)
+└── 16-frontier-architectures-and-research-thinking/   # Reading papers, research habits (NEW)
 ```
 
 ---
