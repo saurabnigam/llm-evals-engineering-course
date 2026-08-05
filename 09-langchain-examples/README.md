@@ -2,6 +2,16 @@
 
 > **Practical implementation patterns for Python with LangChain and OpenAI**
 
+> ### ⚠️ A note on `temperature=0` in the code below
+>
+> Several samples in this module pass `temperature=0`. On OpenAI models that call still runs, so the code works — but **the reasoning usually attached to it does not**, and you should not carry the habit forward:
+>
+> - **It does not make evals reproducible.** Temperature 0 narrows the sampling distribution; it does not eliminate run-to-run variation. Batching, hardware non-determinism, and MoE routing all still bite. Demonstrated in Module 00 §0.3b.
+> - **It is rejected outright on current Claude models.** `temperature`, `top_p`, and `top_k` return a 400 on Opus 5, Opus 4.7/4.8, and Fable 5, and for non-default values on Sonnet 5. Any harness you port will fail on the parameter, not on the logic.
+> - **The replacement is statistical, not a different knob.** Run each case *n* times and report an interval (Module 15 §15.2). Where you want to trade quality against cost, the modern control is `effort`, not temperature.
+>
+> Read `temperature=0` in this module as "legacy OpenAI-idiomatic", not as a recommendation. The LangChain structure around it — chains, evaluators, datasets, runners — is the part that transfers.
+
 ## 9.1 Setting Up Your Eval Environment
 
 ### Project Structure
@@ -66,7 +76,8 @@ class EvalConfig(BaseSettings):
     
     # Model settings
     eval_model: str = "gpt-5.5"  # Model for evaluation
-    eval_temperature: float = 0.0  # Deterministic for evals
+    eval_temperature: float = 0.0  # legacy OpenAI idiom — NOT determinism; see note above
+    eval_trials: int = 5           # the actual answer to variance: repeat and report an interval
     
     # Cost controls
     max_cost_per_run: float = 10.0
