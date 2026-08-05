@@ -60,6 +60,13 @@ class OfflineEvaluator:
         return 1.0 if prediction == expected else 0.0
 ```
 
+> ⚠️ **The shape is right; the scorer is not.** Exact match is shown here because
+> it makes the loop structure obvious, but it is the scorer Module 0 §0.3b
+> demonstrated failing — five correct answers, four of them scored zero. Keep this
+> harness skeleton and swap `score()` for one of the methods in Module 02. Exact
+> match earns its place only where the output space is genuinely closed: a
+> classification label, a JSON field, a numeric answer, a tool name.
+
 ### 1.2.2 Online Evaluations
 
 Real-time evaluations on production traffic.
@@ -150,6 +157,10 @@ golden_dataset = [
 | **Perplexity** | exp(cross-entropy) | Language model quality |
 | **pass@k** | `1 - (1-p)^k` — P(≥1 of k trials succeeds) | Code/agent tasks where one success is enough |
 | **pass^k** | `p^k` — P(*all* k trials succeed) | Agent reliability (see 1.3b) |
+| **Cohen's κ** | `(p_o - p_e) / (1 - p_e)` | Agreement between a judge and a human, corrected for chance. The number that tells you whether a judge's score is evidence |
+| **Coverage** | `measured / attempted` | Share of eval cases that produced a usable result. A pass rate without coverage hides refusals, timeouts, and parse failures |
+
+**Reading Cohen's κ.** Raw agreement (`p_o`) is misleading whenever one label dominates: if 95% of your cases are "safe", a judge that blindly says "safe" agrees with humans 95% of the time and has learned nothing. κ subtracts the agreement you'd expect by chance (`p_e`), so that judge scores ≈ 0. Rough bands: **≥ 0.8** strong (a verdict can gate a release), **0.6–0.8** usable, **0.4–0.6** iterate on the rubric, **< 0.4** the judge and your humans are measuring different things — fix the guideline before trusting the number.
 
 > **Currency note:** BLEU, ROUGE, and perplexity are pre-LLM-era metrics — you will still meet them in papers, but they rarely gate modern systems. What frontier labs report in 2026 model cards is task success over repeated trials (Anthropic averages headline benchmarks over 5 trials per task in the [Fable 5 system card](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf)) plus rubric-based judge scores (Module 2).
 
@@ -207,7 +218,7 @@ pass^k  =  P(ALL k trials succeed)               =  p^k
            p = per-trial success rate
 ```
 
-pass^k ("pass-hat-k") was introduced by [τ-bench](https://arxiv.org/abs/2406.12045) because a deployed agent must succeed *every* time — the original paper found GPT-4o's pass^8 fell below 25% on retail tasks. The same per-trial rate produces wildly different numbers:
+pass^k ("pass-hat-k") was introduced by **τ-bench** (Yao, Shinn, Razavi & Narasimhan, [arXiv:2406.12045](https://arxiv.org/abs/2406.12045)) because a deployed agent must succeed *every* time. Their headline finding is worth quoting directly, because it is the cleanest statement of the problem in the literature: state-of-the-art function-calling agents "succeed on <50% of the tasks, and are quite inconsistent (pass^8 <25% in retail)." Note what that pairs — a mediocre success rate *and* a much worse consistency rate. The second number is the one that decides whether you can ship. The same per-trial rate produces wildly different numbers:
 
 | Per-trial success p | pass@3 | pass^3 | pass^8 |
 |---------------------|--------|--------|--------|
@@ -217,31 +228,67 @@ pass^k ("pass-hat-k") was introduced by [τ-bench](https://arxiv.org/abs/2406.12
 
 Read that middle row again: a "90% agent" has a **57% chance of at least one failure across 8 runs**. To ship an agent with pass^8 ≥ 90%, the per-trial success rate must exceed ~98.7%. This is why the 2026 benchmark wave (covered in [Module 2](../02-evaluation-methods/README.md)) reports reliability metrics, not just single-shot scores.
 
+### Estimating these from logged trials (do not use the naive version)
+
+The obvious implementation — take the first k trials of each task and check `any()` / `all()` — is **biased and needlessly noisy**. It throws away every trial after the k-th, and with a small number of trials it swings wildly: one lucky ordering flips a task's verdict.
+
+The standard fix comes from the Codex paper ([Chen et al., 2021, arXiv:2107.03374](https://arxiv.org/abs/2107.03374)), which introduced the **unbiased pass@k estimator**. Run `n ≥ k` trials, count the `c` successes, and compute the exact probability that a random draw of k from those n contains at least one success:
+
+```
+                    C(n − c, k)
+pass@k  =  1  −  ─────────────────
+                      C(n, k)
+```
+
+The same logic gives an unbiased pass^k — the probability that a random draw of k contains *only* successes:
+
+```
+              C(c, k)
+pass^k  =  ─────────────
+              C(n, k)
+```
+
 ```python
 from collections import defaultdict
+from math import comb
 
 def reliability_report(trial_results: list[dict], k: int) -> dict:
-    """Estimate pass@k and pass^k empirically from logged trials.
+    """Unbiased pass@k and pass^k from logged trials (Chen et al. 2021).
 
     trial_results: [{"task_id": "t1", "success": True}, ...]
-    Assumes >= k trials were run per task.
+    Uses ALL trials per task, not just the first k.
     """
-    by_task = defaultdict(list)
+    by_task: dict[str, list[bool]] = defaultdict(list)
     for r in trial_results:
         by_task[r["task_id"]].append(r["success"])
 
-    at_k = sum(any(t[:k]) for t in by_task.values()) / len(by_task)
-    hat_k = sum(all(t[:k]) for t in by_task.values()) / len(by_task)
-    return {"pass@k": at_k, "pass^k": hat_k, "k": k, "tasks": len(by_task)}
+    skipped = [t for t, runs in by_task.items() if len(runs) < k]
+    if skipped:                      # never silently average over under-sampled tasks
+        raise ValueError(f"{len(skipped)} task(s) have fewer than k={k} trials: {skipped[:3]}")
 
-trials = [
-    {"task_id": "t1", "success": True},  {"task_id": "t1", "success": True},
-    {"task_id": "t1", "success": False}, {"task_id": "t2", "success": True},
-    {"task_id": "t2", "success": True},  {"task_id": "t2", "success": True},
-]
+    at_k, hat_k = [], []
+    for runs in by_task.values():
+        n, c = len(runs), sum(runs)
+        at_k.append(1.0 - comb(n - c, k) / comb(n, k))   # ≥1 success in a draw of k
+        hat_k.append(comb(c, k) / comb(n, k))            # all k succeed
+    return {
+        "pass@k": sum(at_k) / len(at_k),
+        "pass^k": sum(hat_k) / len(hat_k),
+        "k": k, "tasks": len(by_task),
+        "trials_per_task": {t: len(r) for t, r in by_task.items()},
+    }
+
+trials = (
+    [{"task_id": "t1", "success": s} for s in (True, True, False, True)] +
+    [{"task_id": "t2", "success": s} for s in (True, True, True, True)]
+)
 print(reliability_report(trials, k=3))
-# {'pass@k': 1.0, 'pass^k': 0.5, 'k': 3, 'tasks': 2}
+# {'pass@k': 1.0, 'pass^k': 0.625, 'k': 3, 'tasks': 2, ...}
 ```
+
+Note `comb(n - c, k)` is zero whenever fewer than k failures exist, and `comb(c, k)` is zero whenever fewer than k successes exist — the formulas handle the edge cases for free. For task `t1` (3 of 4 succeeded), pass^3 = C(3,3)/C(4,3) = 1/4 = 0.25, versus the naive first-3 estimator which would have scored it a flat 0 purely because the failure happened to land third.
+
+> **Why this matters more than it looks.** The naive estimator does not just add noise — it adds noise *in the direction of whatever ordering your harness produced*, and eval harnesses rarely randomize trial order. If your runner executes trials in a fixed sequence and something warms up (a cache, a connection pool, a retry budget), the first k trials are systematically unrepresentative.
 
 ### Worked example: which metric for which product?
 
