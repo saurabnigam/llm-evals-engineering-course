@@ -112,6 +112,10 @@ Tokens seen during training (approximate for frontier models):
 │  Llama 3.1 405B     │  ~15T tokens    │ 405B        │ ~16K GPUs            │
 │  DeepSeek V3→R1     │  Disclosed in   │ MoE (open   │ ~$5.6M (V3 base)     │
 │  (2024→2025)        │  peer review    │ weights)    │ + $294K (R1 RL stage)│
+│  DeepSeek-V4 (2026) │  >32T tokens    │ 1.6T MoE    │ Muon optimizer;      │
+│                     │                 │ (49B active)│ open weights         │
+│  Kimi K3 (2026)     │  Undisclosed    │ 2.8T MoE    │ 896 experts,         │
+│                     │                 │ (104B act.) │ 16 active; open      │
 │  Claude Fable 5     │  Undisclosed    │ Undisclosed │ AWS + GCP            │
 │  (2026)             │                 │             │                       │
 └────────────────────────────────────────────────────────────────────────────┘
@@ -122,6 +126,11 @@ and a $294K RL training cost on top of the ~$5.6M V3 base -- a useful
 calibration point against the $100M+ pretraining-era folklore.
 Source: https://www.nature.com/articles/s41586-025-09422-z
 ```
+
+**Read the 2026 rows for the ratio, not the headline.** DeepSeek-V4-Pro activates 49B of 1.6T parameters (~3%); Kimi K3 activates 104B of 2.8T (~3.7%, routing 16 of 896 experts). Two consequences that matter to an eval engineer even though you will never train these:
+
+1. **Total parameter count has stopped being a capability or cost signal.** A "2.8T model" can serve closer to the cost of a 100B dense model. When comparing systems, use active parameters, context length, and published per-token price — and treat any comparison table built on total parameters as marketing.
+2. **Open weights change what reproducible evaluation means.** Both 2026 rows ship weights publicly ([DeepSeek-V4, arXiv:2606.19348](https://arxiv.org/abs/2606.19348); [Kimi K3, arXiv:2607.24653](https://arxiv.org/abs/2607.24653)), so you can pin an exact artifact — no silent version updates, no deprecation, no rate limits. For evals that must be reproducible years later (regulatory, academic, longitudinal), an open-weights baseline run alongside your API model is cheap insurance against the API model changing underneath your baseline. Module 16 §16.2 covers what else these reports disclose.
 
 ### Scaling Laws
 
