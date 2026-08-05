@@ -182,6 +182,21 @@ The dominant cluster is the improvement hypothesis: *the agent doesn't walk the 
 
 Generate test cases using LLMs or rule-based systems.
 
+> ### ⚠️ Read this before you generate a single case: the circularity trap
+>
+> If model **X** writes your eval cases, and model **X** (or its sibling) is the system under test, or the judge, then **X's blind spots are invisible to your eval by construction**. It cannot write a test case for a failure mode it does not know exists, and it will not flag an output that matches its own priors. The eval will look healthy and will be systematically blind in exactly the places that matter most.
+>
+> This is not hypothetical — it is the default outcome, and it is why "we generated 500 synthetic cases and we pass 94%" is one of the least informative sentences in this field.
+>
+> | Circularity | What it hides | Mitigation |
+> |---|---|---|
+> | Generator = system under test | Failure modes the model doesn't "know about" never get a case written | Generate with a **different model family**; better, generate from real production traces (§4.7) |
+> | Generator = judge | The judge finds its own generated answer natural and passes it | Different family for judge and generator, and calibrate the judge against humans (Module 02 §2.3.6) |
+> | Generated cases never seen by a human | Impossible, degenerate, or mislabeled cases enter the golden set and are then treated as ground truth forever | **Human-review every synthetic case before it becomes golden.** This is the non-negotiable one |
+> | Cases generated from the same seed prompt | Surface diversity, structural sameness — 500 cases testing one thing | Grid-sample dimensions first (§4.2b Move 1–2), generate per cell |
+>
+> **The honest framing:** synthetic data is excellent for *coverage of variation you have already identified* and useless for *discovering variation you haven't*. Use it to fill a grid you designed, not to tell you what the grid should be. The grid comes from error analysis on real traces, expert interviews, and fault injection (§4.2b) — all of which involve a human or reality, not a generator.
+
 ### 4.3.1 LLM-Based Generation
 
 ```python
@@ -776,7 +791,13 @@ Return as JSON:
             model=self.labeling_model,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
-            temperature=0.3  # Lower temperature for more consistent labels
+            # NOTE: earlier versions of this code set temperature=0.3 "for more
+            # consistent labels." That reasoning does not survive contact with
+            # the evidence (Module 00 §0.2): lowering temperature narrows the
+            # output distribution, it does not make a judgement reproducible,
+            # and current frontier models reject the parameter outright.
+            # Consistency comes from a sharper rubric and from labelling each
+            # case n times, not from a sampling knob.
         )
         
         return json.loads(response.choices[0].message.content)
