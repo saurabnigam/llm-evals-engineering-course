@@ -608,22 +608,91 @@ def compare_results(current: Dict, baseline: Dict) -> Dict:
             'delta_pct': (delta / baseline_mean * 100) if baseline_mean else 0
         }
         
-        if delta < -0.02:  # 2% threshold for regression
+        # ⚠️ A FIXED THRESHOLD IS ONLY VALID IF YOUR SUITE CAN RESOLVE IT.
+        # See the box below: a 2% gate on a 200-case suite fires on noise.
+        # `min_detectable` is computed from the suite size, and a delta smaller
+        # than it is reported as INDETERMINATE rather than as a pass or a fail.
+        n = current['aggregated']['by_evaluator'][eval_name].get('n', 0)
+        min_detectable = minimum_detectable_effect(baseline_mean, n)
+
+        if delta < -min_detectable:
             comparison['regressions'].append({
                 'metric': eval_name,
                 'delta': delta,
-                'severity': 'high' if delta < -0.05 else 'medium'
+                'min_detectable': min_detectable,
+                'severity': 'high' if delta < -2 * min_detectable else 'medium'
             })
-        elif delta > 0.02:
+        elif delta > min_detectable:
             comparison['improvements'].append({
                 'metric': eval_name,
                 'delta': delta
             })
-    
+        elif abs(delta) > 0.005:
+            # Moved, but not by enough to distinguish from sampling noise.
+            # Surfacing this is the point — silence here is what trains a team
+            # to believe every wiggle is real.
+            comparison.setdefault('indeterminate', []).append({
+                'metric': eval_name,
+                'delta': delta,
+                'min_detectable': min_detectable,
+                'note': f'need ~{required_n(baseline_mean, abs(delta)):,} cases to resolve this'
+            })
+
     comparison['has_regressions'] = len(comparison['regressions']) > 0
     comparison['passed'] = not comparison['has_regressions']
     
     return comparison
+
+
+def minimum_detectable_effect(baseline: float, n: int, power: float = 0.80) -> float:
+    """Smallest change this suite size can distinguish from noise.
+
+    Inverts the two-proportion sample-size formula (Module 15 §15.2). Returns
+    a large number for tiny suites, which is the correct behaviour: it makes
+    the gate refuse to fire rather than fire randomly.
+    """
+    from math import sqrt
+    from statistics import NormalDist
+    if n < 2:
+        return 1.0
+    z_a, z_b = NormalDist().inv_cdf(0.975), NormalDist().inv_cdf(power)
+    # Approximation: solve mde ≈ (z_a + z_b) * sqrt(2 * p(1-p) / n)
+    return (z_a + z_b) * sqrt(2 * baseline * (1 - baseline) / n)
+
+
+def required_n(baseline: float, mde: float, power: float = 0.80) -> int:
+    """Cases per arm needed to resolve a change of size `mde`."""
+    from math import sqrt, ceil
+    from statistics import NormalDist
+    p1, p2 = baseline, max(baseline - mde, 1e-6)
+    pbar = (p1 + p2) / 2
+    z_a, z_b = NormalDist().inv_cdf(0.975), NormalDist().inv_cdf(power)
+    num = (z_a * sqrt(2 * pbar * (1 - pbar)) + z_b * sqrt(p1 * (1 - p1) + p2 * (1 - p2))) ** 2
+    return ceil(num / (mde ** 2))
+```
+
+> ### ⚠️ Sizing your gate: the threshold most CI configs get wrong
+>
+> The `--max-regression 0.05` and `delta < -0.02` above are the defaults almost every team ships, and on a realistically-sized eval suite **both are below the noise floor**. From the sample-size arithmetic in Module 15 §15.2, detecting a drop from an 85% baseline needs roughly:
+>
+> | Change you want to catch | Cases needed (per arm) |
+> |---|---:|
+> | 10 points | 250 |
+> | 5 points | 906 |
+> | 2 points | 5,274 |
+>
+> So a **2% regression gate on a 200-case suite is a coin flip with a CI badge.** It will fire on runs where nothing changed, the team will learn that red builds mean "re-run it", and the gate stops functioning as a gate — the failure mode is social, not statistical, and it is permanent once trust is gone.
+>
+> Three ways out, in order of preference:
+>
+> 1. **Set the threshold from the suite, not from taste.** `minimum_detectable_effect()` above does this. If it tells you your suite can only resolve 9-point swings, that is the honest gate — and the finding is that your suite is too small.
+> 2. **Grow the suite where it gates.** You do not need 5,000 cases everywhere. You need them on the *one or two* metrics that block a release; everything else can be telemetry.
+> 3. **Gate on something with less variance.** Deterministic checks (schema validity, refusal behaviour on a fixed red-team set, tool-call shape) have near-zero sampling noise and can carry tight thresholds honestly. Push the hard gate onto those and let the judged metrics inform rather than block.
+>
+> **Report the MDE next to the pass rate in every CI comment.** `87.2% — smallest resolvable change 9.4pp (n=200)` tells a reviewer instantly whether the number in front of them can support the decision they are about to make. Grow that suite to 500 cases and the same line reads `5.9pp` — which is the concrete argument for spending a week writing test cases, stated in the units the decision is actually made in.
+
+```python
+# (continued)
 
 def main():
     parser = argparse.ArgumentParser()
