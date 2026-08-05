@@ -333,71 +333,103 @@ print(f"Score: {results['score']}")  # 1.0
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+> ### ⚠️ The diagram above is the pattern you will meet everywhere — and it has three defects
+>
+> It is drawn as most tutorials and most production code write it, because you need to recognise it. Do not copy it. Three things are wrong, and §1.4d, §2.3.6 and Module 00 §0.4 all circle back to them:
+>
+> | Defect in the diagram | Why it bites | Fix |
+> |---|---|---|
+> | **A 1–5 scale** | Judges bunch on 3 and 4, so five levels carry maybe two bits. Nobody can define the 3/4 boundary, so the number is not reproducible across judges, runs, or people — and you cannot act on "3.6" | **Binary verdict + quoted evidence.** If you need gradation, get it from *how many* binary criteria passed |
+> | **Three criteria in one call** | Halo effect: a fluent, well-organised answer pulls its *accuracy* score up, because the judge is looking at all three at once | **One isolated call per criterion** (§2.3.4) |
+> | **Score first, reasoning after** | The score gets generated before the justification exists, so the "reasoning" field is a post-hoc rationalisation of a number the model already committed to | **Evidence first, verdict last** — make the model quote the text before it judges it |
+>
+> Everything below is written the corrected way. When you see a 1–5 judge in someone else's harness, that is not automatically wrong — it is a signal to go check their κ against human labels (§2.3.6).
+
 ### 2.3.1 Single Judge Implementation
 
+The current-correct shape: **one criterion per call, evidence before verdict, schema enforced by the API rather than by a parser**. Structured outputs (`output_config.format`) make the response shape a guarantee — no `json.loads` in a retry loop, no "output ONLY valid JSON" in the prompt, no assistant prefill (which returns a 400 on current models — Module 15 §15.4).
+
 ```python
-from openai import OpenAI
+# pip install anthropic pydantic
+import anthropic, json
 from pydantic import BaseModel
 from typing import Optional
 
-class EvalResult(BaseModel):
-    score: float
-    reasoning: str
-    strengths: list[str]
-    weaknesses: list[str]
+client = anthropic.Anthropic()
+
+class Verdict(BaseModel):
+    evidence: str      # ORDER MATTERS: quoted first...
+    verdict: str       # ...so the judgement is derived from it, not rationalised after
+    confidence: str
+
+VERDICT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "evidence": {"type": "string",
+                     "description": "Quote the exact span of the response you are judging."},
+        "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+        "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+    },
+    "required": ["evidence", "verdict", "confidence"],
+    "additionalProperties": False,
+}
 
 class LLMJudge:
-    """Single LLM evaluator"""
-    
-    def __init__(self, model: str = "gpt-5.5"):
-        self.client = OpenAI()
-        self.model = model
-    
-    def evaluate(self, 
-                 question: str, 
-                 response: str, 
-                 criteria: str,
-                 reference: Optional[str] = None) -> EvalResult:
-        
-        reference_section = f"\nReference Answer: {reference}" if reference else ""
-        
-        prompt = f"""You are an expert evaluator. Assess the following response.
+    """Single-criterion LLM evaluator."""
 
-Question: {question}
-Response: {response}{reference_section}
+    def __init__(self, model: str = "claude-opus-5", effort: str = "high"):
+        self.model, self.effort = model, effort
 
-Evaluation Criteria: {criteria}
-
-Provide your evaluation in the following JSON format:
-{{
-    "score": <float between 0.0 and 1.0>,
-    "reasoning": "<detailed explanation of your score>",
-    "strengths": ["<strength 1>", "<strength 2>"],
-    "weaknesses": ["<weakness 1>", "<weakness 2>"]
-}}
-
-Be rigorous and objective. A score of 0.5 means adequate, 0.7 means good, 0.9+ means excellent.
-"""
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"}
+    def evaluate(self,
+                 question: str,
+                 answer: str,              # renamed from `response` — the old code
+                 criterion: str,           # shadowed this name with the API response
+                 reference: Optional[str] = None) -> Verdict | None:
+        ref = f"\nReference answer: {reference}" if reference else ""
+        prompt = (
+            f"Question asked: {question}\n"
+            f"Response given: {answer}{ref}\n\n"
+            f"Criterion — {criterion}\n\n"
+            "First quote the exact span of the response that determines this "
+            "criterion. Then give a PASS or FAIL verdict on that evidence alone. "
+            "If the response already satisfies the criterion, PASS it — do not "
+            "look for reasons to fail a good answer."
         )
-        
-        result_json = json.loads(response.choices[0].message.content)
-        return EvalResult(**result_json)
+        r = client.messages.create(
+            model=self.model, max_tokens=2000,
+            output_config={"format": {"type": "json_schema", "schema": VERDICT_SCHEMA},
+                           "effort": self.effort},
+            messages=[{"role": "user", "content": prompt}],
+        )
+        if r.stop_reason == "refusal":
+            return None       # UNMEASURED — not a FAIL. See Module 15 §15.4
+        return Verdict(**json.loads(next(b.text for b in r.content if b.type == "text")))
 
-# Example usage
+
+# Example usage — note one call per criterion, not one call for all of them
 judge = LLMJudge()
-result = judge.evaluate(
-    question="Explain quantum entanglement to a 10-year-old",
-    response="Quantum entanglement is like having two magic coins that always land the same way, no matter how far apart they are!",
-    criteria="Accuracy, age-appropriateness, clarity, engagement"
-)
-print(f"Score: {result.score}")
-print(f"Reasoning: {result.reasoning}")
+question = "Explain quantum entanglement to a 10-year-old"
+answer = ("Quantum entanglement is like having two magic coins that always land "
+          "the same way, no matter how far apart they are!")
+
+for criterion in [
+    "Is the explanation factually defensible as a simplification (not actively misleading)?",
+    "Is the vocabulary appropriate for a 10-year-old?",
+    "Does it avoid implying that information travels faster than light?",
+]:
+    v = judge.evaluate(question, answer, criterion)
+    print(f"{v.verdict if v else 'UNMEASURED':10}  {criterion[:50]}...")
+    if v and v.verdict == "FAIL":
+        print(f"            evidence: {v.evidence}")
 ```
+
+Three details in there are the whole lesson:
+
+1. **`evidence` is declared before `verdict` in the schema.** Structured outputs are generated in field order, so this forces the model to find and quote the relevant text *before* committing to a judgement. Reversing these two lines measurably changes results — it turns the evidence field into a justification of a decision already made.
+2. **The prompt explicitly permits passing.** Judges drift toward finding fault because criticism reads as rigour; without that sentence, false-positive rate climbs, and in a retry loop that directly burns budget (Module 14 §14.3).
+3. **A refusal returns `None`, not `FAIL`.** Scoring a refusal as a failure invents a measurement nobody made, and refusals cluster by topic — so it depresses scores in precisely the categories you are trying to assess.
+
+**Where a graded score IS legitimate:** ranking and triage, not gating. If you need to sort 500 outputs by quality to review the worst 20, a continuous score is fine — you only care about ordering. The moment a number becomes a release gate or a reported metric, switch to binary criteria you can define.
 
 ### 2.3.2 Multi-Judge Panel
 
@@ -761,7 +793,9 @@ A judge you haven't calibrated is a random number generator with good vibes. The
 
 - [LangSmith Align Evals](https://blog.langchain.com/introducing-align-evals/) (July 2025) productized exactly this loop, including storing human corrections as few-shot examples for the judge.
 - The Hamel Husain / Shreya Shankar school operationalizes step 3 as TPR/TNR of the judge against human labels derived from error analysis ([evals FAQ, Jan 2026](https://hamel.dev/blog/posts/evals-faq/evals-faq.pdf)) — a judge with great accuracy but poor TNR on your most expensive failure mode is worse than no judge.
-- See Example A in 2.7.8 for runnable Cohen's κ calibration code. Rule of thumb from that example: κ ≥ 0.6 → ship; 0.4–0.6 → iterate the prompt; < 0.4 → redesign.
+- See Example A in 2.7.8 for runnable Cohen's κ calibration code. Bands (matching Module 01 §1.3): **κ ≥ 0.8** strong enough for the verdict to gate a release; **0.6–0.8** usable as telemetry and for triage; **0.4–0.6** iterate the prompt or the rubric; **< 0.4** redesign — the judge and your humans are answering different questions, and no amount of prompt tuning fixes an under-specified criterion.
+
+> **A κ caveat worth knowing before you report one.** κ is deflated when the label distribution is heavily skewed — with 95% passes, even a good judge can post a mediocre κ simply because there is little chance-corrected room to move (the "kappa paradox"). If κ looks bad but TPR and TNR both look fine, trust TPR/TNR and report all three. κ is a summary; the confusion matrix is the evidence.
 
 #### The TPR/TNR arithmetic, worked (why "the judge is 86% accurate" means nothing)
 
