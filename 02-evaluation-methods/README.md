@@ -622,7 +622,20 @@ Which response is better? Respond with JSON:
 
 ```python
 class RubricEvaluator:
-    """Detailed rubric-based evaluation with specific criteria"""
+    """Detailed rubric-based evaluation with specific criteria.
+
+    NOTE ON THE 1-5 SCALES BELOW — this is NOT the anti-pattern from §2.3.
+    The difference is anchoring. "Rate clarity 1-5" is unanchored: the levels
+    mean whatever the judge decides today. The rubric here defines every level
+    in observable terms ("Code works for basic cases but has some bugs"), which
+    makes 3-vs-4 a question about the artifact rather than about taste, and
+    makes the score reproducible across judges and runs.
+
+    Test for whether your scale is anchored: could two people who have never
+    met assign the same level to the same artifact, using only your level
+    descriptions? If not, you have a Likert scale wearing a rubric costume ---
+    collapse it to binary criteria instead.
+    """
     
     def __init__(self, rubric: dict):
         self.rubric = rubric
@@ -649,13 +662,15 @@ For each criterion, provide:
 Respond in JSON format with a "scores" object containing each criterion.
 """
         
-        response = self.client.chat.completions.create(
+        # NOTE: named `api_result`, not `response` — `response` is this method's
+        # own parameter, and shadowing it is how a later edit silently breaks.
+        api_result = self.client.chat.completions.create(
             model="gpt-5.5",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
         
-        return json.loads(response.choices[0].message.content)
+        return json.loads(api_result.choices[0].message.content)
     
     def _format_rubric(self) -> str:
         lines = []
