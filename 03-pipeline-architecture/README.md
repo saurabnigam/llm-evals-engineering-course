@@ -330,21 +330,51 @@ class EvalRun:
 **Agent-aware orchestration: trials, not samples.** If the system under test is an *agent* (multi-step, tool-using, stochastic), the orchestrator above needs one structural change: run **k independent trials per task** and aggregate per-task, because a single run tells you almost nothing about reliability. The vocabulary standardized by Anthropic's [Demystifying evals for AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents) (Jan 2026): a **task** is the test case + success criteria, a **trial** is one stochastic run, the **transcript** is the full record including tool calls, and the **outcome** is the actual end-state of the environment — grade that, not what the agent claims. Report **pass@k** (≥1 of k trials succeeds) when one success is enough, and **pass^k** (all k succeed) when consistency matters — a 75% per-trial agent is only ~42% reliable at pass^3. Two pipeline consequences: (1) `EvalResult` gains a `trial_index` and aggregation happens per `(task_id)` group, and (2) each trial must start from a clean, isolated environment so failures aren't correlated through shared infra (see sandboxing in 3.5).
 
 ```python
+from dataclasses import dataclass
+from math import comb
+
 @dataclass
 class TaskAggregate:
-    """Per-task aggregate over k trials of an agent eval"""
+    """Per-task aggregate over n trials of an agent eval.
+
+    IMPORTANT: `n` (trials you ran) and `k` (trials the metric is about) are
+    different numbers, and conflating them is the most common bug in agent
+    eval pipelines. If you ran 10 trials and report "pass^3", that must mean
+    "the probability that 3 randomly drawn trials all succeed" — NOT "all 10
+    succeeded". Run n >= k and estimate k from n (Module 01 §1.3b).
+    """
     task_id: str
-    trials: int
-    successes: int
+    trials: int          # n — how many trials actually ran
+    successes: int       # c — how many succeeded
 
-    @property
-    def pass_at_k(self) -> bool:          # at least one success
-        return self.successes >= 1
+    def pass_at_k(self, k: int) -> float:
+        """P(at least one success in a draw of k) — unbiased (Chen et al. 2021)."""
+        n, c = self.trials, self.successes
+        if n < k:
+            raise ValueError(f"{self.task_id}: ran {n} trials, cannot estimate k={k}")
+        return 1.0 - comb(n - c, k) / comb(n, k)
 
-    @property
-    def pass_hat_k(self) -> bool:         # every trial succeeded (pass^k)
-        return self.successes == self.trials
+    def pass_hat_k(self, k: int) -> float:
+        """P(all k succeed in a draw of k)."""
+        n, c = self.trials, self.successes
+        if n < k:
+            raise ValueError(f"{self.task_id}: ran {n} trials, cannot estimate k={k}")
+        return comb(c, k) / comb(n, k)
+
+
+# Why this matters at the pipeline layer, not just the metrics layer:
+t = TaskAggregate(task_id="refund_flow", trials=10, successes=9)
+print(f"pass@3  {t.pass_at_k(3):.3f}")    # pass@3  1.000
+print(f"pass^3  {t.pass_hat_k(3):.3f}")   # pass^3  0.700
+print(f"pass^8  {t.pass_hat_k(8):.3f}")   # pass^8  0.200
+# The naive "successes == trials" test would have called this task a flat
+# FAILURE at every k — one bad trial out of ten. It is actually a task with a
+# 70% chance of surviving three consecutive runs and a 20% chance of surviving
+# eight. Those are three different ship decisions, and only one of them is
+# visible from a boolean.
 ```
+
+> **Pipeline consequence:** store `(task_id, trial_index, success)` rows, not per-task booleans. Aggregation is a query, and you cannot recover trial-level detail from a collapsed boolean — so a pipeline that stores the boolean has permanently thrown away the ability to answer "what's our pass^8?" without a full re-run.
 
 ### 3.2.3 Result Storage and Retrieval
 
