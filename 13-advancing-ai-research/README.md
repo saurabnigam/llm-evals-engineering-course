@@ -698,6 +698,15 @@ Sources: [Fable 5 / Mythos 5 system card](https://www-cdn.anthropic.com/d00db56f
 
 ## 13.6 How to Think Like an Alignment Researcher
 
+> **This section and [Module 16 §16.7](../16-frontier-architectures-and-research-thinking/README.md#167-how-to-think-like-a-researcher) are two halves of one skill, deliberately kept apart.**
+>
+> | | What it gives you |
+> |---|---|
+> | **§13.6 (here)** — *concepts* | The frameworks you reason **with**: Goodhart, inner vs outer alignment, distributional shift, mesa-optimization. These tell you what kind of thing can go wrong and what to look for |
+> | **[§16.7](../16-frontier-architectures-and-research-thinking/README.md#167-how-to-think-like-a-researcher)** — *practice* | The habits you work **by**: convert opinions into falsifiable predictions, change one variable at a time, ask what would refute this, distrust your own best result, keep a log |
+>
+> Concepts without practice produce confident essays; practice without concepts produces well-run experiments on unimportant questions. Read both, in either order.
+
 ### The Key Mental Models
 
 ```
