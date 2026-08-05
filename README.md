@@ -24,10 +24,21 @@
 | **[11-how-frontier-models-are-trained](./11-how-frontier-models-are-trained/)** | **The Training Pipeline: Pretraining → SFT → RLHF/RLVR → Constitutional AI, and how the latest models were evaluated** | **4 hours** | **Expert** |
 | **[12-eval-training-separation](./12-eval-training-separation/)** | **Benchmark Integrity, Contamination, Dynamic Evals** | **3 hours** | **Expert** |
 | **[13-advancing-ai-research](./13-advancing-ai-research/)** | **Contributing to the Frontier: Alignment, Safety, Research Skills** | **3 hours** | **Expert** |
+| **[14-loop-engineering](./14-loop-engineering/)** | **Loop Engineering: Evaluating Self-Correcting Systems** | **3 hours** | **Advanced** |
+| **[15-opus5-eval-techniques](./15-opus5-eval-techniques/)** | **Evaluating in the Opus 5 Era: API-Native Eval Techniques** | **2 hours** | **Advanced** |
 
-**Total Study Time: ~41 hours**
+**Total Study Time: ~46 hours**
 
 ---
+
+## What's New in the August 2026 Edition
+
+This revision adds the two things practitioners kept asking for — **how do you evaluate a system that evaluates itself**, and **what changed at the API layer** — plus a production case study that exercises both.
+
+- **Module 14 (new) — [Loop Engineering](./14-loop-engineering/)**: the unit of production AI is the loop, not the call. The three nested loops (turn / task / outer), the six components every task loop needs, the **verifier asymmetry law** (why a weak gate makes the loop worse, with the arithmetic), the loop metric set that replaces pass@k alone (marginal yield, regression rate, oscillation rate, cost per accepted output, loop tax), stop-condition design, gate architecture, a nine-entry failure catalog with log signatures, and the Goodhart guardrails a self-improving outer loop needs.
+- **Module 15 (new) — [Evaluating in the Opus 5 Era](./15-opus5-eval-techniques/)**: `temperature=0` is gone, so evals are now statistical — intervals, MDE, and how big your suite actually needs to be. Effort as a first-class eval axis with a cost-quality frontier; structured-output judges replacing the prefill-and-regex era; **refusals as `UNMEASURED`, not `FAIL`**; running a 10K-judgment suite for 12% of naive cost; context management and **memory stores as a contamination vector**; and a migration table for eval harnesses.
+- **Case Study 10 (new) — [Uber Eats multimodal image agent](./08-case-studies/#case-study-10-uber-eats-multimodal-image-agent--evaluating-generation-with-no-ground-truth)**: a production generative pipeline with no ground truth, from a talk by Soumya Gupta and Jai Chopra (Uber). Covers the routing gate that **censors your own dataset**, faithfulness as a veto rather than a weighted score, Swiss-cheese guardrails and what correlated layers cost, flat-JSON observability, and closing the loop to conversion rate without Goodharting the golden set.
+- **Claude Opus 5** (`claude-opus-5`) threaded through the code and the tech stack: thinking on by default, the five-level effort ladder, 512-token prompt-cache minimum, task budgets, `fallbacks: "default"`.
 
 ## What's New in the June 2026 Edition
 
@@ -93,13 +104,20 @@ open 07-cicd-integration/README.md    # CI/CD setup
 
 ## Learning Paths
 
-### Path 1: Complete Course (5 weeks)
+### Path 1: Complete Course (6 weeks)
 ```
 Week 1: Modules 00-02 (Foundations + Eval Methods)
 Week 2: Modules 03-04 (Pipelines & Cold Start)
 Week 3: Modules 05-06 (Scaling & Feedback)
 Week 4: Modules 07-10 (Production & Advanced)
 Week 5: Modules 11-13 (Training, Separation & Research)
+Week 6: Modules 14-15 (Loop Engineering & Opus 5-Era Techniques)
+```
+
+### Path 5: Agentic Systems Track (2 weeks) -- NEW
+```
+Week 1: Modules 01 (§1.3b pass@k), 14 (Loop Engineering), 08 (Case Studies 5, 9, 10)
+Week 2: Modules 15 (Opus 5-era techniques), 03 (§3.3.4 trace flywheel), 06 (Feedback loops)
 ```
 
 ### Path 2: Practical Focus (2 weeks)
@@ -150,6 +168,10 @@ Week 3: Module 13 (Research Frontier + Project Planning)
 - Feedback loops and active learning
 - **Evaluation-Driven Development (EDD/EDDOps)** -- NEW
 - **Self-evolving evaluation pipelines** -- NEW
+- **Loop metrics: marginal yield, regression rate, oscillation, cost per accepted output** -- NEW
+- **Statistical eval design: intervals, MDE, and sizing your suite** -- NEW
+- **Refusal handling and coverage reporting (`UNMEASURED` ≠ `FAIL`)** -- NEW
+- **Memory and agent state as contamination vectors** -- NEW
 
 ### Enterprise Patterns
 - Constitutional AI evaluation
@@ -175,7 +197,7 @@ Week 3: Module 13 (Research Frontier + Project Planning)
 This guide uses:
 - **Python 3.11+**
 - **LangChain / LangGraph** for LLM and agent orchestration
-- **Anthropic API** (Claude Fable 5 `claude-fable-5`, Opus 4.8 `claude-opus-4-8`, Sonnet 4.6 `claude-sonnet-4-6`, Haiku 4.5 `claude-haiku-4-5`) and **OpenAI API** (GPT-5.5, GPT-5.4-mini reasoning models) — frontier models reason by default; "effort"/"thinking budget" is a tunable knob that changes both score and cost
+- **Anthropic API** (Claude Fable 5 `claude-fable-5`, **Opus 5 `claude-opus-5`**, Opus 4.8 `claude-opus-4-8`, Sonnet 5 `claude-sonnet-5`, Haiku 4.5 `claude-haiku-4-5`) and **OpenAI API** (GPT-5.5, GPT-5.4-mini reasoning models) — frontier models reason by default; **`effort`** (`low`→`max`) is a tunable knob that changes both score and cost, and sampling parameters (`temperature`, `top_p`) are no longer accepted on current models (see Module 15)
 - **Pydantic** for data validation and structured outputs
 - **Redis/Celery** for distributed processing
 - **GitHub Actions** for CI/CD
@@ -221,6 +243,7 @@ By the end of this guide, you'll be able to:
 | Engineering Manager | Skim all, deep dive 03, 07, 10 |
 | **Aspiring AI Researcher** | **Path 4: Modules 01-02, 10-13** |
 | **AI Safety Engineer** | **Modules 10-13, then 02-03** |
+| **Shipping an agent or self-correcting pipeline** | **Path 5: Modules 14-15, then 08 Case Studies 5/9/10** |
 
 ---
 
@@ -280,7 +303,9 @@ eval-engineering/
 ├── 10-advanced-topics/                    # Enterprise patterns + alignment faking
 ├── 11-how-frontier-models-are-trained/    # Training pipeline deep dive (NEW)
 ├── 12-eval-training-separation/           # Contamination & dynamic evals (NEW)
-└── 13-advancing-ai-research/              # Research frontier & career path (NEW)
+├── 13-advancing-ai-research/              # Research frontier & career path (NEW)
+├── 14-loop-engineering/                   # Self-correcting loops & their metrics (NEW)
+└── 15-opus5-eval-techniques/              # Opus 5-era harness techniques (NEW)
 ```
 
 ---

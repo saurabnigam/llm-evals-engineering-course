@@ -4,7 +4,20 @@
 
 This module presents detailed case studies of evaluation systems in production. Each case study includes the problem, architecture, implementation details, and lessons learned.
 
-Case studies 1–6 are practitioner-scale composites (realistic but anonymized/illustrative numbers). Case studies 7–9 are documented public evaluations from 2025–2026 — a frontier-model release, an economically grounded benchmark, and a long-horizon agent eval — with every number traceable to a primary source.
+Case studies 1–6 are practitioner-scale composites (realistic but anonymized/illustrative numbers). Case studies 7–9 are documented public evaluations from 2025–2026 — a frontier-model release, an economically grounded benchmark, and a long-horizon agent eval — with every number traceable to a primary source. Case study 10 is a **production multimodal agent** (Uber Eats image enhancement) presented publicly by the team that built it: architecture and design principles from the source, arithmetic worked here.
+
+**Which case study to read for which problem:**
+
+| Your problem | Case study |
+|---|---|
+| Free-text quality, no ground truth | 1 (support bot), 8 (GDPval) |
+| Ground truth exists (tests, execution) | 2 (code gen) |
+| Retrieval + grounding | 3 (RAG) |
+| Precision/recall trade on a contested label | 4 (moderation) |
+| Multi-step tool use, reliability | 5 (refund agent), 9 (Vending-Bench) |
+| Reasoning traces and effort settings | 6 (math tutor) |
+| Release gating, safety, third-party audit | 7 (Fable 5 system card) |
+| **Generative pipeline, reference-free, brand-critical, self-correcting loop** | **10 (Uber Eats image agent)** |
 
 ---
 
@@ -1433,6 +1446,333 @@ The transcripts, not the leaderboard, are the real product: **context degradatio
 
 ---
 
+## Case Study 10: Uber Eats Multimodal Image Agent — Evaluating Generation With No Ground Truth
+
+> Source: a talk by **Soumya Gupta** and **Jai Chopra** (Uber) on the multimodal agent that enhances food photography on Uber Eats. Architecture, stage boundaries, and design principles below follow their account; **all numbers in this section are illustrative** unless a source is cited — treat them as worked arithmetic, not reported Uber metrics.
+
+### The Problem
+
+Hundreds of thousands of independent merchants upload their own food photos. Many are bad in ways that cost the merchant orders — dim lighting, cluttered composition, bad crop, phone-flash glare. A better photo lifts conversion. But the obvious fix (regenerate the image) is unacceptable: the picture is a **commercial claim about what arrives in the bag**. And a marketplace where every photo has been pushed toward the same "good food photo" prior is a marketplace that has erased the thing that makes it a marketplace.
+
+So the eval problem is defined by three properties that break most eval playbooks at once:
+
+| Property | Why the usual approach fails |
+|---|---|
+| **No reference output** | There is no "correct" enhanced image to diff against. Exact match, BLEU, and every reference-based metric are unavailable. |
+| **Quality is subjective, harm is not** | "Better composition" is a matter of taste. "Shows a garnish the merchant doesn't serve" is a factual defect with legal and trust consequences. These two cannot live on the same 1–5 scale. |
+| **Marketplace-level effects** | Every per-image metric can improve while the portfolio gets worse (homogenization). Your eval set has to measure the population, not just the sample. |
+
+Compare this to Case Study 2 (code generation), where tests give free ground truth, and to Case Study 4 (moderation), where labels are contested but at least discrete. This is the hardest eval regime: **generative, subjective, reference-free, and brand-critical**.
+
+### Architecture and the Eval That Belongs to Each Stage
+
+The system is three stages, and — this is the transferable lesson — **each stage is a different kind of eval problem**. Teams that try to cover an agentic pipeline with one end-to-end quality score end up unable to answer "which stage regressed?"
+
+```
+        ┌────────────────────────┐
+Input   │ 1. Understanding &     │  → skip (most images)
+image + │    Routing Agent       │
+metadata└────────┬───────────────┘
+                 │ enhance
+                 ▼
+        ┌────────────────────────┐
+        │ 2. Edit ⇄ QA Loop      │ ◄─┐  pass@K self-correction
+        │    (directive → edit   │   │
+        │     → QA gate)         │ ──┘  fail → re-edit with critique
+        └────────┬───────────────┘
+                 │ passed
+                 ▼
+        ┌────────────────────────┐
+        │ 3. Final Guardrails    │  → publish-ready
+        │    (Swiss cheese)      │
+        └────────────────────────┘
+                 │
+                 ▼   production traces
+        ┌────────────────────────────────────────┐
+        │ Closed loop: sample → golden benchmark │
+        │ → diagnosis agent → prompt/config      │
+        │ update → canary → promote              │
+        └────────────────────────────────────────┘
+```
+
+#### Stage 1 — Routing agent: a classifier, and you must evaluate it like one
+
+The routing agent reads the image plus metadata and answers one question: *does this image need enhancement at all?* Gupta and Chopra are explicit that it behaves as a classifier **optimized for recall** — missing a genuinely bad image is the expensive error — while keeping compute down, because the cheap path (skip) has to stay cheap at marketplace volume.
+
+That framing gives you the eval for free: confusion matrix, precision/recall at the deployed threshold, and cost per thousand images. But there is a trap here that catches most production teams:
+
+> **The routing gate censors your dataset.** Only routed images get enhanced, so only routed images produce downstream quality signal. Your false-negative rate — good-looking-to-the-router images that were actually bad — is invisible in production data *by construction*. You cannot measure it without deliberately sampling and labeling images the router **rejected**.
+
+This is the single most common measurement bug in cascaded AI systems, and it has a standard fix: sample the skipped population on a schedule and label it.
+
+```python
+# pip install anthropic
+# Estimating true recall of a routing gate under censoring.
+# The router's own precision is measurable from production; its recall is NOT,
+# because rejected images never get a downstream label. Buy that number back
+# with a small stratified audit of the rejected pool.
+from dataclasses import dataclass
+
+@dataclass
+class RouterAudit:
+    routed_n: int              # images the router sent to enhancement
+    routed_truly_bad: int      # of those, human-confirmed as needing enhancement
+    skipped_sampled_n: int     # random sample drawn from the SKIPPED pool
+    skipped_sampled_bad: int   # of that sample, human-confirmed as needing enhancement
+    skipped_total: int         # size of the whole skipped pool this period
+
+    def precision(self) -> float:
+        return self.routed_truly_bad / self.routed_n
+
+    def estimated_false_negatives(self) -> float:
+        """Extrapolate missed-bad-images from the audited sample to the full pool."""
+        miss_rate = self.skipped_sampled_bad / self.skipped_sampled_n
+        return miss_rate * self.skipped_total
+
+    def estimated_recall(self) -> float:
+        tp = self.routed_truly_bad
+        fn = self.estimated_false_negatives()
+        return tp / (tp + fn)
+
+# Illustrative numbers, not Uber's:
+audit = RouterAudit(
+    routed_n=10_000, routed_truly_bad=8_400,
+    skipped_sampled_n=500, skipped_sampled_bad=35,
+    skipped_total=190_000,
+)
+print(f"precision {audit.precision():.1%}")          # precision 84.0%
+print(f"est. misses {audit.estimated_false_negatives():,.0f}")  # est. misses 13,300
+print(f"est. recall {audit.estimated_recall():.1%}")            # est. recall 38.7%
+```
+
+The arithmetic is the point. A router with a comfortable-looking 84% precision can be missing the majority of bad images, and **nothing in your production dashboards will say so** — every downstream metric is computed on the routed slice, which looks fine. The audit line item (500 human labels per period) is what converts an unfalsifiable claim into a number.
+
+Threshold selection then becomes an explicit, defensible trade rather than a vibe:
+
+| Threshold | Est. recall | Images routed | Enhancement compute | Marginal cost per +1pp recall |
+|---|---|---|---|---|
+| 0.7 | 62% | 5.2% | 1.0× | — |
+| 0.5 | 81% | 9.1% | 1.8× | ~4.2% compute / pp |
+| 0.3 | 93% | 17.4% | 3.3× | ~7.8% compute / pp |
+
+*(Illustrative.)* Publish this table with every threshold change. "We chose 0.5" is not a decision; "we bought 19 points of recall for 80% more enhancement compute, and declined the next 12 points because they cost twice as much per point" is.
+
+#### Stage 2 — The edit ⇄ QA loop: pass@K, and a veto criterion that must never be averaged
+
+The generation stage is a loop: an agent produces an edit against explicit directives, a **QA gate** scores it on dimensions including plating, **faithfulness**, and realism, and the system iterates — a **pass@K** strategy where failure feeds a critique back into the next attempt. (Full treatment of loop design and its metrics is Module 14.)
+
+The eval-design decision that matters most here is **how the QA gate aggregates its dimensions**. The instinct is a weighted average: `0.4·plating + 0.3·faithfulness + 0.3·realism`. That is wrong, and dangerously so, because it lets a beautiful image buy its way past a faithfulness failure. Faithfulness is not a quality dimension. It is a **veto**.
+
+```python
+# pip install anthropic
+# QA gate with veto semantics: aesthetics are scored, integrity is binary.
+# One isolated judge call per criterion (never one omnibus call — module 02 §2.3.4).
+import anthropic, base64, json
+
+client = anthropic.Anthropic()
+MODEL = "claude-opus-5"
+
+VETO = {  # any failure here rejects the edit outright, whatever the scores are
+    "faithfulness": (
+        "Does the edited image depict ONLY food, portions, packaging, and garnishes "
+        "that are present in the original image? Adding, removing, or substituting any "
+        "edible component is a FAIL. Lighting, background, crop, and color correction "
+        "are NOT violations."
+    ),
+    "realism": (
+        "Could this plausibly be a photograph of real food? Physically impossible "
+        "geometry, melted or smeared edges, duplicated items, or garbled text is a FAIL."
+    ),
+}
+SCORED = {  # only consulted once every veto passes
+    "plating": "Is the food arranged so the main item is clearly readable as the hero?",
+    "composition": "Is the crop and framing free of distracting clutter and dead space?",
+    "lighting": "Is the subject evenly lit, without blown highlights or muddy shadows?",
+}
+
+VERDICT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+        "evidence": {"type": "string", "description": "The specific region or detail relied on."},
+        "repair_directive": {"type": "string", "description": "Empty if PASS."},
+    },
+    "required": ["verdict", "evidence", "repair_directive"],
+    "additionalProperties": False,
+}
+
+def _img(b: bytes) -> dict:
+    return {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                        "data": base64.standard_b64encode(b).decode()}}
+
+def judge_criterion(name: str, question: str, original: bytes, edited: bytes) -> dict:
+    resp = client.messages.create(
+        model=MODEL, max_tokens=2000,
+        output_config={"format": {"type": "json_schema", "schema": VERDICT_SCHEMA},
+                       "effort": "high"},
+        messages=[{"role": "user", "content": [
+            {"type": "text", "text": "ORIGINAL:"}, _img(original),
+            {"type": "text", "text": "EDITED:"}, _img(edited),
+            {"type": "text", "text": f"Criterion `{name}`. {question}\n"
+                                     "Answer PASS or FAIL, cite the evidence you relied on, "
+                                     "and if FAIL give one concrete repair directive."},
+        ]}],
+    )
+    if resp.stop_reason == "refusal":          # Opus 5 classifiers can decline — never
+        return {"verdict": "FAIL",             # read content[0] before checking this
+                "evidence": f"judge refused ({resp.stop_details.category if resp.stop_details else 'unknown'})",
+                "repair_directive": "escalate to human review"}
+    return json.loads(next(b.text for b in resp.content if b.type == "text"))
+
+def qa_gate(original: bytes, edited: bytes) -> dict:
+    """Veto first (cheap to fail fast), then score. Never average the two."""
+    for name, q in VETO.items():
+        v = judge_criterion(name, q, original, edited)
+        if v["verdict"] == "FAIL":
+            return {"passed": False, "blocked_by": name, **v}
+    scores = {n: judge_criterion(n, q, original, edited) for n, q in SCORED.items()}
+    passed = sum(s["verdict"] == "PASS" for s in scores.values())
+    return {
+        "passed": passed >= 2,                    # quality bar: 2 of 3 aesthetic criteria
+        "blocked_by": None if passed >= 2 else "quality_bar",
+        "scores": scores,
+        "repair_directive": " ".join(s["repair_directive"] for s in scores.values()
+                                     if s["verdict"] == "FAIL"),
+    }
+```
+
+Three things this structure buys you that a single omnibus "rate this edit 1–5" call does not:
+
+1. **A failure tells you what to fix.** `blocked_by: "faithfulness"` and `blocked_by: "lighting"` route to completely different repairs — and to different owners.
+2. **Isolated calls don't let dimensions contaminate each other.** A gorgeous image drags an omnibus judge's faithfulness assessment upward; a separate call with only the faithfulness question in context can't be seduced.
+3. **The veto is structurally un-tradeable.** No amount of prompt drift on the aesthetic criteria can create a path to publishing an unfaithful image, because the veto is evaluated in code, not by the model.
+
+**And the gate itself needs an eval set.** This is the step production teams skip. The QA gate is a classifier over (original, edited) pairs, so it has precision and recall against human judgment, and those numbers move whenever anyone touches the judge prompt or the model version:
+
+| Gate criterion | Human-labeled pairs | Gate precision | Gate recall | Cohen's κ |
+|---|---|---|---|---|
+| faithfulness | 400 | 0.94 | 0.88 | 0.81 |
+| realism | 400 | 0.91 | 0.83 | 0.74 |
+| plating | 400 | 0.72 | 0.69 | 0.44 |
+
+*(Illustrative.)* Read the last row honestly: κ = 0.44 on plating means the gate and your human raters **substantially disagree about what good plating is**. That is not necessarily a bug — it may mean your annotation guideline is underspecified — but it does mean a plating score is not yet evidence for a launch decision, while a faithfulness verdict (κ = 0.81) is. Different criteria earn different levels of trust, and your dashboard should say which.
+
+#### Stage 3 — Swiss cheese, and the correlation that quietly eats it
+
+The final stage is post-processing plus a "publish-ready" QA step, described explicitly as a **Swiss cheese model**: several imperfect layers stacked so that a defect has to pass through a hole in every slice.
+
+The arithmetic only works if the layers fail **independently**. And here is the failure mode that turns a Swiss cheese defense into a single slice with extra latency: if your stage-2 QA gate and your stage-3 publish check are the same model, running the same prompt family, on the same inputs, they do not have independent holes — **they have the same hole**, and you have paid three times for one layer of protection.
+
+```python
+# What layer independence is worth — and what correlation costs you.
+def escape_rate(layer_miss_rates: list[float], correlation: float = 0.0) -> float:
+    """correlation=0 → independent layers; correlation=1 → layers fail together."""
+    independent = 1.0
+    for m in layer_miss_rates:
+        independent *= m
+    worst_layer = max(layer_miss_rates)          # fully-correlated case
+    return correlation * worst_layer + (1 - correlation) * independent
+
+layers = [0.15, 0.20, 0.10]     # each layer misses 10–20% of defects on its own
+print(f"{escape_rate(layers, 0.0):.4%}")   # 0.3000%  — genuinely independent
+print(f"{escape_rate(layers, 0.5):.4%}")   # 10.1500% — same model, same prompt family
+print(f"{escape_rate(layers, 0.9):.4%}")   # 18.0300% — three names for one check
+```
+
+Thirty defects per ten thousand versus eighteen hundred. Same three layers, same individual miss rates — the entire difference is whether the layers were designed to fail differently. So make independence a **design requirement and a measured quantity**: vary the model family, vary the modality (a deterministic pixel-diff check catches artifacts no vision model reasons about), vary the input framing (one layer sees the pair, one sees the edit alone), and then **measure the residual correlation** on your labeled set by checking how often layers agree on the cases they get wrong.
+
+### The Closed Loop: Continuous Learning Without Goodharting Yourself
+
+The most advanced part of the system is the continuous-learning pipeline, which exists to fight model and data drift: it **samples production data**, benchmarks it against a **golden dataset of human-labeled examples**, and runs a **diagnosis agent** that identifies what regressed and triggers prompt optimization and configuration updates — without manual intervention. Merchant feedback, internal dogfooding, and design-team critique feed into the same diagnosis layer.
+
+This is the right architecture, and it comes with one danger that must be engineered against explicitly:
+
+> **A loop that optimizes prompts against a benchmark, and also decides when the benchmark is satisfied, will eventually optimize the benchmark rather than the product.** This is Goodhart's law with a service account.
+
+The mitigations are cheap, and they are the difference between a self-improving system and a self-congratulating one:
+
+| Guardrail | What it prevents |
+|---|---|
+| **Frozen holdout the optimizer never queries** — a slice of the golden set that only the promotion gate reads | Prompt optimization overfitting to the specific images in the visible benchmark |
+| **Human re-label cadence on a rotating sample** | Golden-set labels drifting as they get quietly "corrected" toward what the system already does |
+| **Offline gate → canary → promote**, never optimizer-to-production | A confident diagnosis agent shipping a regression at marketplace scale |
+| **Every config version pinned to the eval run that promoted it** | Un-diagnosable regressions: "which prompt was live when the complaint rate moved?" |
+| **Stratified golden set** (cuisine, region, lighting, merchant size, camera class) | Aggregate improvement that hides a regression on a subpopulation — e.g. a lighting model tuned on bright studio-like inputs quietly failing on dimly-lit home kitchens |
+
+The stratification requirement is not just fairness hygiene here — it is how you detect **homogenization**, the marketplace-level failure that no per-image metric can see. Two portfolio-level metrics are worth carrying permanently:
+
+```python
+# Marketplace diversity guard: is enhancement making everything look the same?
+# Run on embeddings of published images, pre- vs post-enhancement, per cuisine.
+import numpy as np
+
+def mean_pairwise_distance(embeddings: np.ndarray) -> float:
+    """Higher = more visually diverse portfolio."""
+    n = len(embeddings)
+    normed = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
+    sims = normed @ normed.T
+    return float(1 - (sims.sum() - n) / (n * (n - 1)))
+
+def homogenization_delta(before: np.ndarray, after: np.ndarray) -> float:
+    """Negative = the enhancement pipeline is collapsing visual variety."""
+    return mean_pairwise_distance(after) - mean_pairwise_distance(before)
+```
+
+Wire `homogenization_delta` into the promotion gate as a **guardrail metric with a hard floor**, alongside merchant opt-out rate and complaint rate. A prompt change that lifts per-image quality by 3% and drops portfolio diversity by 15% should not be promotable, and only an explicit guardrail will stop it — the quality metric alone will wave it through.
+
+### Observability: Logging Is the Deliverable
+
+Gupta and Chopra make a point that deserves more attention than it usually gets: **logging is critical**, and the end-to-end orchestration is logged as a **flat JSON structure** specifically so that both technical and non-technical teams can diagnose issues at scale.
+
+The word doing the work is *flat*. Nested trace objects are the natural shape of an agentic pipeline and the wrong shape for the people who need to answer questions about it. A flat, one-row-per-run schema is queryable in SQL by an ops analyst, pivotable in a spreadsheet by a design reviewer, and joinable to business metrics without a parsing step:
+
+```json
+{
+  "run_id": "img_7f3a91",
+  "merchant_id": "m_44812",
+  "cuisine": "thai",
+  "region": "us-west",
+  "pipeline_version": "2026-07-14.3",
+  "router_score": 0.61,
+  "router_decision": "enhance",
+  "router_latency_ms": 240,
+  "edit_attempts": 2,
+  "qa_fail_reason_attempt_1": "lighting",
+  "qa_fail_reason_attempt_2": null,
+  "veto_triggered": false,
+  "final_verdict": "published",
+  "guardrail_layer_flags": "none",
+  "total_cost_usd": 0.0412,
+  "total_latency_ms": 8830,
+  "human_review": false
+}
+```
+
+One row per image, one column per decision, every column answerable by someone who has never read the code. `SELECT qa_fail_reason_attempt_1, COUNT(*) FROM runs WHERE pipeline_version = '2026-07-14.3' GROUP BY 1` is a regression triage in one line. That is the whole argument for flatness — and note that the schema is designed so a *reason* is logged next to every failure, not just a boolean. A pipeline that logs `passed: false` and nothing else has told you that something is wrong and given you no way to find it.
+
+### Connecting Eval Metrics to the Business Metric
+
+The north star is **conversion rate** — did the enhanced photo cause more people to order? Everything upstream (QA pass rate, gate precision, aesthetic scores) is a **proxy**, and proxies must be periodically re-validated against the thing they proxy for:
+
+1. **Run the experiment.** A holdout of eligible images stays un-enhanced; conversion difference is the ground truth.
+2. **Correlate the proxy.** Do images that scored well on the aesthetic gate actually convert better than images that barely passed? If the correlation is near zero, your gate is measuring taste, not commerce — and you should either fix the rubric or stop treating its score as a launch criterion.
+3. **Watch the guardrails independently.** Conversion can rise while merchant trust falls. Opt-out rate, complaint rate, and diversity delta are not tie-breakers; they are vetoes at the business level, exactly as faithfulness is a veto at the image level.
+
+This is the loop that most AI teams never close, and it is the one that determines whether the eval system is a science project or a product function.
+
+### Key Insights
+
+1. **Decompose the pipeline, decompose the eval.** A routing classifier, a generative loop, and a guardrail stack are three different measurement problems. One end-to-end score cannot tell you which one broke.
+2. **Optimize the gate for the asymmetric error, then pay to measure the invisible one.** Recall-optimized routing is correct — but the false-negative rate is structurally unobservable in production data and has to be bought with a labeled audit of the rejected pool.
+3. **Integrity constraints are vetoes, not weighted dimensions.** The moment faithfulness has a weight, it has an exchange rate. Enforce vetoes in code, above the model.
+4. **Your judge is a classifier with a κ score.** Criteria where the gate and humans agree (faithfulness) can gate a launch; criteria where they don't (plating) are telemetry until the guideline is fixed.
+5. **Swiss cheese only works if the holes are in different places.** Correlated layers multiply cost, not protection — vary model, modality, and framing, and measure the residual correlation.
+6. **Flat logs are an eval artifact.** One row per run, a reason next to every failure, and non-engineers can do their own triage.
+7. **A self-optimizing loop needs a benchmark it cannot touch.** Frozen holdout, human re-label cadence, canary before promote — otherwise the diagnosis agent optimizes the scoreboard.
+8. **Population metrics catch what per-item metrics cannot.** Marketplace homogenization is invisible to every per-image score and fatal to the product thesis; it needs its own guardrail with its own floor.
+
+---
+
 ## Summary: Key Takeaways
 
 ### 1. Start with the Right Dimensions
@@ -1444,6 +1784,7 @@ Each use case has different priorities:
 - Frontier release: Capability + dangerous capability + alignment — measured on separate configurations
 - Economic deliverables: Blind expert pairwise win rate
 - Long-horizon agents: Outcome metrics + reliability (pass^k)
+- Generative media: Scored aesthetics **plus** vetoed integrity constraints — never on one scale
 
 ### 2. Layer Your Evaluation
 ```
@@ -1464,6 +1805,12 @@ Evaluation gates prevent regressions before they reach users.
 
 ### 7. Reliability Beats Luck
 pass@k rewards one lucky run; pass^k demands consistency every time. Deployed agents live and die on pass^k (Case Studies 5 and 9).
+
+### 8. Every Gate Censors the Data Behind It
+A router, filter, or QA gate makes the errors it *lets through* measurable and the errors it *blocks* invisible. Budget for a labeled audit of the rejected pool, or accept that half your confusion matrix is a guess (Case Study 10).
+
+### 9. Defense in Depth Requires Uncorrelated Depth
+Three layers built from the same model and the same prompt family are one layer billed three times. Vary model, modality, and framing — then measure the residual correlation (Case Study 10).
 
 ---
 
