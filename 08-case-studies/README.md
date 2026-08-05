@@ -1555,9 +1555,9 @@ Threshold selection then becomes an explicit, defensible trade rather than a vib
 |---|---|---|---|---|
 | 0.7 | 62% | 5.2% | 1.0× | — |
 | 0.5 | 81% | 9.1% | 1.8× | ~4.2% compute / pp |
-| 0.3 | 93% | 17.4% | 3.3× | ~7.8% compute / pp |
+| 0.3 | 93% | 17.4% | 3.3× | ~12.5% compute / pp |
 
-*(Illustrative.)* Publish this table with every threshold change. "We chose 0.5" is not a decision; "we bought 19 points of recall for 80% more enhancement compute, and declined the next 12 points because they cost twice as much per point" is.
+*(Illustrative. Marginal cost is Δcompute ÷ Δrecall between adjacent rows.)* Publish this table with every threshold change. "We chose 0.5" is not a decision; **"we bought 19 points of recall at 4.2% compute per point, and declined the next 12 because they cost 12.5% per point — three times the price"** is. The shape of that column is the general finding, not a quirk of these numbers: recall gets sharply more expensive near the top of the range, because the images the router is still missing are the genuinely ambiguous ones.
 
 #### Stage 2 — The edit ⇄ QA loop: pass@K, and a veto criterion that must never be averaged
 
