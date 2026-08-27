@@ -1,8 +1,24 @@
 # Module 3: Building Evaluation Pipelines
 
+## In Plain English
+
+An evaluator answers a question about one output. A pipeline makes that answer reproducible: it records which case, model, prompt, tools, judge, and environment produced it; separates task failures from infrastructure failures; and preserves enough evidence to replay the run. Without that plumbing, a changed score is often impossible to explain.
+
 ## 3.1 Pipeline Architecture Overview
 
 A robust evaluation pipeline is the backbone of any AI quality system. It must be reliable, scalable, and maintainable.
+
+The pipeline controls below are themselves eval infrastructure, not administrative decoration:
+
+| Pipeline evidence | What it covers | Issue it catches | Decision it enables |
+|---|---|---|---|
+| Versioned sample and prompt IDs | Exactly what was tested | A “model regression” caused by silently changing the dataset or system prompt | Reproduce the old run or compare like with like |
+| Per-evaluator status and coverage | Whether every attempted score is actually measured | Refusals, parse errors, or timeouts disappear from the denominator and inflate the pass rate | Fail the run as incomplete or repair the evaluator |
+| Clean environment per agent trial | Independence of files, caches, credentials, and state | Trial two succeeds only because trial one left a file behind | Invalidate the reliability estimate and fix isolation |
+| Outcome plus observable trace | Final state and the actions used to reach it | Agent claims success without changing state, or succeeds through a forbidden tool | Distinguish task failure, policy failure, and harness failure |
+| Category and difficulty slices | Performance where risk actually differs | Overall score holds steady while the rare high-risk category collapses | Block or target the affected slice instead of averaging it away |
+
+The documented CORE-Bench example later in this chapter shows why this matters: correcting harness constraints and task ambiguity moved the same model from 42% to 95%. The pipeline was not a neutral observer; it was part of what the score measured.
 
 ### High-Level Architecture
 
@@ -163,8 +179,9 @@ class ProductionSampleSource(DataSource):
 
 ```python
 from typing import Dict, List, Callable, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from dataclasses import dataclass
+from statistics import median
 import time
 import logging
 
@@ -174,11 +191,11 @@ logger = logging.getLogger(__name__)
 class EvalResult:
     """Result of a single evaluation"""
     sample_id: str
-    scores: Dict[str, float]
+    scores: Dict[str, Optional[float]]
     model_output: str
     evaluator_outputs: Dict[str, dict]
     latency_ms: float
-    status: str  # 'success', 'error', 'timeout'
+    status: str  # 'success', 'partial', 'error', 'timeout'
     error_message: Optional[str] = None
 
 class EvalOrchestrator:
@@ -223,8 +240,17 @@ class EvalOrchestrator:
             for future in as_completed(future_to_sample):
                 sample = future_to_sample[future]
                 try:
-                    result = future.result(timeout=self.timeout)
+                    # The model client / sandbox must enforce `self.timeout`.
+                    # Calling result(timeout=...) after `as_completed()` would
+                    # not bound execution: this future is already complete.
+                    result = future.result()
                     results.append(result)
+                except TimeoutError as e:
+                    results.append(EvalResult(
+                        sample_id=sample.id, scores={}, model_output='',
+                        evaluator_outputs={}, latency_ms=self.timeout * 1000,
+                        status='timeout', error_message=str(e),
+                    ))
                 except Exception as e:
                     logger.error(f"Error evaluating {sample.id}: {e}")
                     results.append(EvalResult(
@@ -281,7 +307,7 @@ class EvalOrchestrator:
             model_output=model_output,
             evaluator_outputs=evaluator_outputs,
             latency_ms=latency_ms,
-            status='success'
+            status='partial' if any(score is None for score in scores.values()) else 'success'
         )
 
 @dataclass
@@ -299,7 +325,7 @@ class EvalRun:
         if not self.results:
             return
         
-        successful = [r for r in self.results if r.status == 'success']
+        successful = [r for r in self.results if r.status in {'success', 'partial'}]
         
         # Aggregate by evaluator
         evaluator_scores = {}
@@ -321,9 +347,13 @@ class EvalRun:
                 for name, scores in evaluator_scores.items()
             },
             'evaluator_medians': {
-                name: sorted(scores)[len(scores) // 2]
+                name: median(scores)
                 for name, scores in evaluator_scores.items()
-            }
+            },
+            'evaluator_coverage': {
+                name: len(scores) / len(successful) if successful else 0.0
+                for name, scores in evaluator_scores.items()
+            },
         }
 ```
 
@@ -1453,4 +1483,3 @@ Using Inspect AI (or Harbor), build an agent eval that:
 
 ## Next Module
 → [Module 4: The Cold Start Problem](../04-cold-start/README.md)
-

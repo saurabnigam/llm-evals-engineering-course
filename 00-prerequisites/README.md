@@ -2,6 +2,10 @@
 
 > **For engineers who know software but are new to ML/AI**
 
+## In Plain English
+
+An AI feature still needs ordinary tests for code, schemas, permissions, and other exact rules. It also needs **evals** for behavior that can be expressed many valid ways. The practical question is not “did the model produce my one expected sentence?” but “did it preserve the facts, follow the policy, help the user, and do that reliably across repeated attempts?” This chapter builds that mental model before introducing the machinery.
+
 ## 0.1 How LLMs Work (5-Minute Version)
 
 If you've worked with traditional software, here's the mental model shift:
@@ -31,8 +35,8 @@ If you've worked with traditional software, here's the mental model shift:
 │  │  • Testing: Measure quality distributions                          │     │
 │  └────────────────────────────────────────────────────────────────────┘     │
 │                                                                              │
-│  KEY INSIGHT: LLMs are like hiring a very capable but unpredictable         │
-│  contractor. You can't unit test them - you need to EVALUATE them.          │
+│  KEY INSIGHT: keep unit tests for deterministic code and invariants; add     │
+│  evals for model behavior that has multiple acceptable outputs.              │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -67,12 +71,12 @@ def get_greeting_llm(name: str, time_of_day: str) -> str:
 
 ## 0.2 Key Terminology for Software Engineers
 
-| Traditional Software Term | LLM Equivalent | Notes |
+| Traditional Software Term | Useful LLM-era analogy | Notes |
 |--------------------------|----------------|-------|
-| Function/Method | Model | Takes input, produces output |
-| Source Code | Model Weights | The "logic" - but you can't read it |
+| Function/Method | Model call or AI feature | The feature still includes ordinary code, prompts, tools, and data |
+| Source Code | Model weights (imperfect analogy) | Weights shape behavior, but do not replace your application's readable source |
 | Configuration | Prompt | Instructions that shape behavior |
-| Unit Test | Evaluation | Measures quality, not correctness |
+| Unit Test | Unit test **plus** behavioral eval | Keep exact tests for deterministic components and properties |
 | Bug | Failure Mode | Categories of wrong behavior |
 | Debugging | Error Analysis | Understanding why things go wrong |
 | Code Coverage | Eval Coverage | How many scenarios are tested |
@@ -93,21 +97,21 @@ without checking the order status first.
 completion = model.generate(prompt + user_message)
 
 # TEMPERATURE: a sampling knob that used to control randomness.
-# 0.0 = always pick the most likely next token; 1.0 = more varied.
+# 0.0 = nominally greedy decoding; 1.0 = more varied sampling.
 #
 # ⚠️  READ THIS, IT IS THE MOST COMMONLY TAUGHT OUT-OF-DATE FACT IN EVALS:
 # For years the standard advice was "set temperature=0 for evals so runs are
 # reproducible." That advice is now wrong twice over.
-#   1. It never worked. temperature=0 reduces variance; it does not eliminate
-#      it. Batching, hardware non-determinism, and MoE routing all mean the
-#      same prompt can produce different outputs at temperature 0.
-#   2. It no longer runs. Current frontier models REJECT sampling parameters:
-#      temperature/top_p/top_k return a 400 error on Claude Opus 5, Opus
-#      4.7/4.8, Fable 5, and (for non-default values) Sonnet 5.
+#   1. It never guaranteed determinism. temperature=0 can reduce variance but
+#      does not eliminate it. Batching, hardware non-determinism, and MoE
+#      routing can still produce different outputs from the same prompt.
+#   2. Support is model-specific. Several current Claude models reject
+#      non-default sampling parameters; other providers/models still expose
+#      some of them. Check the documentation for the exact model you call.
 # The modern replacement is statistical: run each case n times and report an
 # interval, not a point estimate. Full treatment in Module 15 §15.2.
 
-# EFFORT: the knob that REPLACED temperature as the thing you tune.
+# EFFORT: a separate reasoning-control knob on models that support it.
 # `output_config: {"effort": "low"|"medium"|"high"|"xhigh"|"max"}` controls how
 # much the model thinks before answering. It changes BOTH score and cost, often
 # by a lot. Record it next to every eval number you report (Module 15 §15.3).
@@ -116,8 +120,8 @@ completion = model.generate(prompt + user_message)
 # token for ordinary English prose — but it is only a rule of thumb, and it is
 # badly wrong for code, JSON, and non-English text (often 1.5–3x more tokens).
 # Never estimate a bill or a context budget from character counts, and never
-# use a different vendor's tokenizer (tiktoken is OpenAI's and undercounts
-# Claude tokens by 15-20% on prose, far more on code). Count exactly:
+# use a different vendor's tokenizer: tokenization differences depend on the
+# text and model, so a fixed percentage is not reliable. Count exactly:
 #     client.messages.count_tokens(model="claude-opus-5", messages=[...])
 
 # CONTEXT WINDOW: how much text the model can "see" at once.
@@ -129,16 +133,17 @@ completion = model.generate(prompt + user_message)
 # instruction-following can degrade long before you hit the limit, which is why
 # "it fits in the window" is not the same as "the model will use it well."
 
-# REASONING MODELS (the default by 2026, not a niche):
-# Almost every frontier model now produces an explicit "thinking" trace
-# before answering — Claude with extended/adaptive thinking, OpenAI's
-# GPT-5.x reasoning, Gemini 3.x Thinking, DeepSeek V4. "Effort" or
+# REASONING MODELS (common at the frontier):
+# Many frontier models perform additional inference-time reasoning — Claude
+# with extended/adaptive thinking, OpenAI reasoning models, Gemini Thinking,
+# and open-weight reasoning models. The raw chain of thought is often hidden,
+# summarized, or unavailable. "Effort" or
 # "thinking budget" is now a tunable knob that changes both score and cost
 # (e.g. Fable 5 reports benchmarks at "adaptive thinking, max effort").
-# Implication for evals: you can score the *reasoning chain* itself, not
-# just the final answer (see CoT-faithfulness evals in module 02) — AND
-# you must record the effort setting next to every score, because the same
-# model at "low" vs "max" effort is effectively two different systems.
+# Implication for evals: score outcomes plus observable actions, tool calls,
+# and policy-relevant trajectory constraints. Treat any exposed rationale as
+# an imperfect artifact, not a faithful window into hidden reasoning. Record
+# the effort/thinking configuration next to every score.
 ```
 
 ---
@@ -154,8 +159,8 @@ PRETRAINING ──▶ SFT ──▶ RLHF / RLVR ──▶ (safety tuning) ──
                 instructions" correct"          misuse"
 ```
 
-- **RLHF** (RL from *Human* Feedback): humans rank model answers, a reward model learns "what people prefer," and the model is optimized toward that. Great for taste and tone; weak when "good" is subjective.
-- **RLVR** (RL from *Verifiable* Rewards): the reward is a checkable fact — *did the code pass the tests? is the math answer correct?* This is the engine behind the 2024–2026 leap in coding and math, and it's why frontier coding scores shot up (e.g. SWE-bench Verified climbing from the ~50% range in 2024 to ~95% for the best 2026 models — [SWE-bench Verified leaderboard](https://llm-stats.com/benchmarks/swe-bench-verified)).
+- **RLHF** (RL from *Human* Feedback): humans rank model answers, a reward model learns "what people prefer," and the model is optimized toward that. It is designed for subjective preferences, but disagreement, rater bias, and an underspecified rubric can make the learned reward unreliable.
+- **RLVR** (RL from *Verifiable* Rewards): the reward is a checkable fact — *did the code pass the tests? is the math answer correct?* It is one important disclosed technique behind recent coding and math gains. Benchmark scores also depend on the model, scaffold, tools, effort, and evaluation protocol, so use the benchmark's primary leaderboard or model report for any current number.
 - **Reward hacking**: when the model learns to satisfy the *checker* rather than the *intent* — e.g. hard-coding a test's expected output instead of solving the problem. Anthropic showed in Nov 2025 that reward hacking learned in production coding RL can generalize to broader misalignment ([arXiv:2511.18397](https://arxiv.org/abs/2511.18397)).
 
 **Why an eval engineer cares:** the artifact you write to *grade* a model (a rubric, a unit test, a judge prompt) is the same kind of artifact used to *reward* it during RLVR. "Environments are the new datasets" — your eval set can become a training set ([Prime Intellect](https://www.primeintellect.ai/blog/environments)). That means **every grader you write is a potential reward spec, and is therefore hackable** — a theme you'll see in Modules 02, 10, and 11.
@@ -171,7 +176,7 @@ PRETRAINING ──▶ SFT ──▶ RLHF / RLVR ──▶ (safety tuning) ──
 def test_addition():
     assert add(2, 2) == 4  # Either right or wrong
 
-# LLM Eval: Quality spectrum
+# LLM Eval: several explicit questions, not one exact string
 def eval_summary():
     article = "Long article about climate change..."
     summary = llm.summarize(article)
@@ -179,17 +184,14 @@ def eval_summary():
     # How do you test this? There's no single "right" answer!
     # You need to EVALUATE multiple dimensions:
     
-    accuracy_score = check_factual_accuracy(summary, article)  # 0.0 - 1.0
-    conciseness_score = check_length_appropriate(summary)      # 0.0 - 1.0
-    readability_score = check_readability(summary)             # 0.0 - 1.0
-    
-    # And aggregate somehow
-    overall_score = (accuracy_score * 0.5 + 
-                    conciseness_score * 0.3 + 
-                    readability_score * 0.2)
-    
-    # Pass threshold, not exact match
-    assert overall_score >= 0.8
+    factual = check_factual_claims(summary, article)  # PASS/FAIL + evidence
+    readable = check_readability(summary)             # PASS/FAIL + evidence
+    within_limit = len(summary.split()) <= 120         # deterministic invariant
+
+    # Factual support is a veto, not something good style can average away.
+    assert factual["verdict"] == "PASS", factual["evidence"]
+    assert readable["verdict"] == "PASS", readable["evidence"]
+    assert within_limit
 ```
 
 ### Types of "Wrong" in LLM Systems
@@ -319,8 +321,8 @@ def my_chatbot(user_message: str) -> str:
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": user_message}
         ],
-        # NOTE: no temperature=0 here. See §0.2 — it does not give you
-        # reproducibility, and current frontier models reject it outright.
+        # NOTE: no temperature=0 here. See §0.2 — it does not guarantee
+        # reproducibility, and support varies by model.
         # Handle variance by running n times, not by pretending it's absent.
     )
     return response.choices[0].message.content
@@ -355,7 +357,7 @@ def llm_quality_eval(input_text: str, response: str) -> dict:
 
     ⚠️ The obvious design — "rate this 1-5 on accuracy, helpfulness, clarity" —
     is the single most common beginner mistake in this field, and this course
-    spends Module 02 §1.4d explaining why. In short:
+    is explained in Module 01 §1.4d. In short:
       • Models cluster hard on 3s and 4s, so a 5-point scale gives you maybe
         two usable values dressed up as five.
       • Nobody can say what separates a 3 from a 4, so the number is not
@@ -365,8 +367,9 @@ def llm_quality_eval(input_text: str, response: str) -> dict:
         the judge is also looking at clarity.
       • You cannot act on "3.4". You can act on "FAIL: contradicted the source
         in paragraph 2."
-    Do this instead: one ISOLATED call per criterion, a binary verdict, and
-    quoted evidence. It costs more calls and it is worth it.
+    A robust default is an isolated verdict per criterion with quoted evidence.
+    You may batch independent criteria after measuring that batching does not
+    change verdict quality; isolation is a design tradeoff, not a law.
     """
     criteria = {
         "accuracy": "Is every factual claim in the response correct?",
@@ -439,6 +442,23 @@ def run_eval():
 if __name__ == "__main__":
     run_eval()
 ```
+
+### What these checks cover, catch, and enable
+
+Use one concrete support case to see why the checks are layered. The policy says: **returns are allowed for 30 days; outside that window, the agent may offer escalation but must not claim a refund was issued.** Suppose the answer is:
+
+> “Your headphones arrived 45 days ago, so they are outside our 30-day return window. I have issued the refund anyway.”
+
+This is a deliberately small teaching case, not a production result:
+
+| Eval | What it covers | What it catches here | Decision it enables |
+|---|---|---|---|
+| Keyword/contains check | Whether required policy language appears | Nothing: “30-day” is present, so this weak check passes | Useful only as a cheap missing-field screen |
+| Policy-accuracy judge | Whether the answer’s claims and actions agree with the stated policy | The answer quotes the rule and then contradicts it by claiming a refund | Block this response and add the contradiction as a regression case |
+| Helpfulness judge | Whether the user gets a usable next step | No escalation or alternative is offered | Improve the prompt or workflow to offer a permitted action |
+| Repeated trials | Whether the same case stays compliant across independent attempts | An intermittent unauthorized refund promise that one run would miss | Estimate reliability and decide whether the feature is safe to ship |
+
+The important lesson is that an eval is valuable only when its failure changes a decision. “Contains `30-day`” covers a narrow invariant; it cannot stand in for policy correctness. Later modules show how to calibrate the judge, preserve the failed example, and turn it into a CI gate.
 
 ---
 
@@ -543,11 +563,10 @@ Evaluate: Each step AND end-to-end quality
 ```python
 # LangChain makes LLM interactions easier
 from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
 
 # Initialize model
-llm = ChatOpenAI(model="gpt-5.5", temperature=0)
+llm = ChatOpenAI(model="gpt-5.4-mini")
 
 # Simple usage
 response = llm.invoke("What is 2+2?")
@@ -661,16 +680,16 @@ Now that you understand the foundations, proceed to:
 | **Prompt** | Instructions/context given to the model |
 | **Completion** | The model's output/response |
 | **Token** | Unit of text (~4 chars of English prose; far fewer chars per token for code and non-English — measure, don't estimate) |
-| **Temperature** | Legacy sampling knob. **0 is not deterministic**, and current frontier models reject the parameter entirely (§0.2, Module 15 §15.2) |
-| **Effort** | The knob that replaced it: how hard the model thinks (`low`→`max`). Changes score *and* cost; always report it with a score |
+| **Temperature** | Sampling knob supported by some models. **0 is not a determinism guarantee**; several current Claude models reject non-default values (§0.2, Module 15 §15.2) |
+| **Effort** | Separate reasoning-control knob on models that support it. It can change score and cost; record it with a score |
 | **Hallucination** | Model inventing false information |
 | **RAG** | Retrieval-Augmented Generation |
 | **Grounding** | Basing responses on provided context |
 | **Eval** | Evaluation - measuring model quality |
 | **Golden Dataset** | Curated test set with verified answers, used as the reference standard |
 | **Judge** | A model used to score another model's output (Module 02) |
-| **pass@k** | Succeeded within k attempts. Flatters — one lucky run counts |
-| **pass^k** | Succeeded on *every* one of k attempts. The honest reliability measure (Module 01 §1.3b) |
+| **pass@k** | At least one success among k clean independent trials; appropriate when the product can choose or retry |
+| **pass^k** | Success on every one of k clean independent trials; useful when repeated reliability matters (Module 01 §1.3b) |
 | **Coverage** | Share of eval cases that produced a real result. A pass rate without coverage can hide refusals and errors (Module 15 §15.4) |
 
 ---
@@ -688,4 +707,3 @@ Foundational papers, if you want the primary sources:
 - Liu et al., [**G-Eval**](https://arxiv.org/abs/2303.16634) — LLM evaluation with better human alignment.
 - Verga et al., [**Replacing Judges with Juries**](https://arxiv.org/abs/2404.18796) — why a panel of smaller judges often beats one large one.
 - Shankar et al., [**Who Validates the Validators?**](https://arxiv.org/abs/2404.12272) — the problem of aligning judges to human criteria, and why rubric-writing is the real work.
-

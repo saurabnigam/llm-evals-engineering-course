@@ -1,8 +1,13 @@
 # Module 14: Loop Engineering
 
-> **The unit of production AI is no longer the call. It is the loop.**
+> **For systems that critique, retry, or learn from use, evaluate the loop—not
+> only the final call.**
 >
-> A 2023 system took a prompt and returned an answer, and eval engineering meant scoring answers. A 2026 system *attempts* something, *checks its own work*, *repairs*, and *retries* — and then a second, slower loop takes what happened in production and rewrites the first loop's configuration. Neither of those loops is evaluable with a metric designed for single responses.
+> A simple system can still take a prompt and return an answer. A looped system
+> *attempts* something, *checks its work*, *repairs*, and *retries*—and a slower
+> outer loop may use production evidence to revise its configuration. A
+> single-response metric cannot tell you which attempt added value, whether the
+> checker rejected good work, or what the retries cost.
 >
 > **Prerequisites:** Module 01 (pass@k vs pass^k), Module 02 (rubrics, judges, judge calibration), Module 06 (feedback loops), Module 08 Case Study 10 (the Uber Eats image agent, which is a worked example of everything in this module).
 
@@ -10,37 +15,43 @@
 
 ## In Plain English (start here if you don't write the code)
 
-A **loop** is a system that checks its own work and tries again when it isn't happy. It writes a draft, something inspects the draft, and if the draft fails inspection it writes another one — up to some limit. Most AI products now work this way, because it is the cheapest way to turn a system that is right 70% of the time into one that is right 90% of the time.
+A **loop** is a system that checks its own work and tries again when it is not good enough. It writes a draft, something inspects the draft, and if the draft fails inspection it writes another one — up to some limit. This pattern can improve an agent without changing the underlying model, but only when the checker is trustworthy and another attempt is worth its cost.
 
-This module is about a question that sounds simple and almost nobody can answer about their own product: **is the checking actually helping, and what is it costing?**
+This module is about the question a final pass rate cannot answer: **is the checking actually helping, and what is it costing?**
 
 Four ideas carry the whole module, and none of them require reading a line of code:
 
-1. **The checker is the whole ballgame.** If the inspector is unreliable, retrying makes things *worse*, not better — it throws away good work and lets bad work through, while tripling the bill. A loop is never better than the thing judging it.
+1. **Checker quality limits loop quality.** If the inspector is unreliable, retrying can make things *worse* — it throws away good work, lets bad work through, and adds cost. A loop cannot repair errors its checker cannot recognize.
 2. **"It passed eventually" hides everything.** A product that succeeds 91% of the time might get 88% of that on the first try, with the retries adding almost nothing while adding most of the cost. Same headline number, completely different business decision.
-3. **Trying again can make things worse.** Sometimes the third draft is worse than the first — the system "improves" itself into a worse answer. This is common, it is measurable, and virtually no team measures it.
+3. **Trying again can make things worse.** Sometimes the third draft is worse than the first — the system "improves" itself into a worse answer. This is measurable; the chapter calls it **regression rate**.
 4. **Log the reason, not just the failure.** "This failed" is useless. "This failed because the lighting check rejected it" is a work item with an owner. Everything else in this module depends on that one habit.
 
-The rest of the module makes each of these measurable. **Terms you'll meet:** *pass@k* — did it succeed within k tries? *pass^k* — did it succeed on *every* one of k tries (the honest measure of reliability)? *gate* or *verifier* — the automated checker. *escalation* — handing a failure to a human.
+The rest of the module makes each of these measurable. One distinction matters from the start:
+
+- **Attempt 1, 2, 3 inside one run** are dependent revisions. Measure them with **accepted by attempt K**, the **accepted-at distribution**, and marginal yield.
+- **Trial 1, 2, 3 started independently from a clean state** measure stochastic reliability. Use standard **pass@k** (at least one trial succeeds) and **pass^k** (every trial succeeds).
+
+Calling both of these "pass@k" hides whether retries repaired one run or whether repeated fresh runs were merely lucky. Other terms you will meet: *gate* or *verifier* — the automated checker; *escalation* — handing an unresolved run to a human or safe fallback.
 
 ---
 
 ## 14.0 Why This Module Exists
 
-Here is the failure that motivates loop engineering as a discipline.
+### A documented failure: the agent succeeded, but the eval said it failed
 
-A team ships an agent with a self-correction loop: generate, check, retry up to 3 times. Offline pass rate goes from 71% to 89%. They ship it. Three weeks later:
+Anthropic reports that Claude Opus 4.5 found a policy loophole while solving a flight-booking task in **τ2-bench**. The written eval marked the trial as a failure, even though the agent found a better solution for the user. A final score alone would have blamed the model. Reading the transcript showed that the **grader was too rigid**. ([Anthropic, “Demystifying evals for AI agents,” 2026](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents))
 
-- Costs are **4.1× forecast**, not the 1.3× they modeled.
-- p99 latency is 40 seconds and nobody can say why.
-- The quality complaints did not go away — they changed shape. Users now report outputs that are *worse* than the un-retried version would have been.
-- Nobody can answer "did the loop help on *this* request?" because the only thing logged is the final output.
+| Eval | What it covered | What it caught | What should improve |
+|---|---|---|---|
+| Outcome grader | Whether the requested state was achieved | The benchmark rejected an unexpectedly valid solution | Grade the real environment outcome and repair the task specification |
+| Transcript review | Why the agent took each action | The model had not simply ignored the task; it found a path the grader did not anticipate | Keep trajectory constraints only for genuinely forbidden actions, not one preferred route |
+| Grader calibration | Agreement between automated verdicts and expert review | A false rejection by the checker | Add this case to the grader's regression set and re-measure false rejects |
 
-Every one of those is a measurement failure, not a modeling failure. The team evaluated the loop's *output* and never evaluated the *loop*.
+This is the verifier asymmetry in concrete form: a checker can force a capable generator to redo correct work. To evaluate the *loop* rather than only its final answer, add the measurements in the right-hand column:
 
-| What they measured | What they needed to measure |
+| A final-only dashboard shows | A loop dashboard must also show |
 |---|---|
-| Final pass rate | Pass rate **per attempt index** — where does the yield actually come from? |
+| Final acceptance rate | Acceptance **by attempt index** — where does the yield actually come from? |
 | Mean cost per call | Cost per **accepted output**, including the attempts that failed |
 | Gate pass rate | Gate **precision and recall against human labels** — is the gate right? |
 | — | **Regression rate**: fraction of cases where attempt 3 scored *worse* than attempt 1 |
@@ -53,7 +64,9 @@ This module is about that right-hand column.
 
 ## 14.1 The Three Loops
 
-Production AI systems contain three nested loops running at three timescales. They fail differently, they need different instrumentation, and conflating them is the root cause of most "our evals looked fine" incidents.
+Looped AI systems can contain three nested loops running at different
+timescales. They fail differently and need different instrumentation; conflating
+them can hide which layer produced a misleading aggregate result.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -63,7 +76,7 @@ Production AI systems contain three nested loops running at three timescales. Th
 │                                                                       │
 │  ┌────────────────────────────────────────────────────────────────┐  │
 │  │ TASK LOOP — seconds to minutes — "is this output good enough?" │  │
-│  │   attempt → QA gate → critique → re-attempt  (pass@K)          │  │
+│  │   attempt → QA gate → critique → re-attempt  (accept by K)     │  │
 │  │                                                                 │  │
 │  │  ┌──────────────────────────────────────────────────────────┐  │  │
 │  │  │ TURN LOOP — one request — "do I have what I need?"       │  │  │
@@ -76,7 +89,7 @@ Production AI systems contain three nested loops running at three timescales. Th
 | Loop | Controlled by | Iterations | Primary metric | Primary failure |
 |---|---|---|---|---|
 | **Turn** | The model (thinking + tool use inside one request) | 1–50 tool calls | Task success, tool-call efficiency | Thrash: repeated identical tool calls |
-| **Task** | Your orchestration code | 1–5 attempts | pass@K, cost per accepted output | Oscillation, over-editing regression |
+| **Task** | Your orchestration code | 1–5 dependent attempts | Accepted by K, marginal yield, cost per accepted output | Oscillation, over-editing regression |
 | **Outer** | Your eval + deployment pipeline | Weekly-ish | Drift detection latency, promotion precision | Goodharting the benchmark |
 
 **The rule that saves the most debugging time:** *every loop needs its own stop condition, its own budget, and its own metric.* When a request is slow and expensive, the first question is *which loop* ran away. If your logging cannot answer that in one query, fix the logging before you tune anything.
@@ -102,7 +115,7 @@ Here is a reference implementation. It is short on purpose — the value is in w
 # pip install anthropic
 """Reference task loop: generate → verify → critique → retry, fully instrumented."""
 import time, json, hashlib
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from typing import Callable, Any
 
 import anthropic
@@ -123,6 +136,9 @@ class Attempt:
     output_tokens: int
     latency_ms: int
     output_hash: str             # for oscillation detection
+    cache_read_tokens: int = 0   # repeated-prefix cache use on this attempt
+    cache_creation_5m_tokens: int = 0
+    cache_creation_1h_tokens: int = 0
 
 
 @dataclass
@@ -135,12 +151,19 @@ class LoopResult:
 
     @property
     def cost_usd(self) -> float:
-        # claude-opus-5: $5 / MTok in, $25 / MTok out
-        return sum(a.input_tokens * 5e-6 + a.output_tokens * 25e-6 for a in self.attempts)
+        # claude-opus-5 standard global rates per MTok: $5 uncached input,
+        # $6.25 for 5-minute cache writes, $10 for 1-hour cache writes,
+        # $0.50 for cache reads, and $25 output.
+        return sum(a.input_tokens * 5e-6
+                   + a.cache_creation_5m_tokens * 6.25e-6
+                   + a.cache_creation_1h_tokens * 10e-6
+                   + a.cache_read_tokens * 0.5e-6
+                   + a.output_tokens * 25e-6
+                   for a in self.attempts)
 
-    def to_row(self) -> dict:
-        """Flat, one row per run — see §14.7 on why flatness is non-negotiable."""
-        row = {
+    def to_rows(self) -> tuple[dict, list[dict]]:
+        """Return one run row plus one row for every attempt (see §14.7)."""
+        run_row = {
             "run_id": self.run_id,
             "outcome": self.outcome,
             "escalated": self.escalated,
@@ -151,17 +174,33 @@ class LoopResult:
             "first_score": self.attempts[0].score if self.attempts else None,
             "final_score": self.attempts[-1].score if self.attempts else None,
         }
-        for a in self.attempts:                    # flatten, don't nest
-            row[f"blocked_by_{a.index}"] = a.blocked_by
-        return row
+        attempt_rows = [{
+            "run_id": self.run_id,
+            "attempt_index": a.index,
+            "passed": a.passed,
+            "blocked_by": a.blocked_by,
+            "critique": a.critique,
+            "score": a.score,
+            "input_tokens": a.input_tokens,
+            "output_tokens": a.output_tokens,
+            "cache_read_tokens": a.cache_read_tokens,
+            "cache_creation_5m_tokens": a.cache_creation_5m_tokens,
+            "cache_creation_1h_tokens": a.cache_creation_1h_tokens,
+            "latency_ms": a.latency_ms,
+            "output_hash": a.output_hash,
+        } for a in self.attempts]
+        return run_row, attempt_rows
 
 
 def run_loop(
     run_id: str,
-    generate: Callable[[str | None], tuple[Any, int, int]],   # critique -> (output, in_tok, out_tok)
+    generate: Callable[[str | None], tuple[Any, int, int, int, int, int]],
+    # critique -> (output, uncached_input_tokens, cache_read_tokens,
+    #              cache_write_5m_tokens, cache_write_1h_tokens, output_tokens)
     verify: Callable[[Any], dict],                            # output -> {passed, blocked_by, critique, score}
     max_attempts: int = 3,
     cost_ceiling_usd: float = 0.50,
+    attempt_cost_reserve_usd: float = 0.10,
     escalate: Callable[[LoopResult], Any] | None = None,
 ) -> LoopResult:
     result = LoopResult(run_id=run_id)
@@ -169,9 +208,17 @@ def run_loop(
     seen_hashes: set[str] = set()
 
     for i in range(1, max_attempts + 1):
+        # Reserve before spending. Set this to a conservative upper bound for
+        # one attempt (from token caps and current model/cache prices).
+        if result.cost_usd + attempt_cost_reserve_usd > cost_ceiling_usd:
+            result.outcome = "exhausted"
+            break
+
         t0 = time.monotonic()
-        output, in_tok, out_tok = generate(critique)
+        output, in_tok, cache_read_tok, cache_5m_tok, cache_1h_tok, out_tok = generate(critique)
         v = verify(output)
+        if not v["passed"] and not v.get("blocked_by"):
+            raise ValueError("Rejected verifier result requires a non-empty 'blocked_by' reason")
         h = hashlib.sha256(str(output).encode()).hexdigest()[:16]
 
         result.attempts.append(Attempt(
@@ -179,6 +226,9 @@ def run_loop(
             critique=v.get("critique", ""), score=v.get("score"),
             input_tokens=in_tok, output_tokens=out_tok,
             latency_ms=int((time.monotonic() - t0) * 1000), output_hash=h,
+            cache_read_tokens=cache_read_tok,
+            cache_creation_5m_tokens=cache_5m_tok,
+            cache_creation_1h_tokens=cache_1h_tok,
         ))
 
         # --- Stop condition 1: success ---
@@ -212,19 +262,29 @@ def run_loop(
     return result
 ```
 
-Two design choices in there are load-bearing and frequently omitted in real systems:
+Several details in this small example carry most of its safety and diagnostic value:
 
-**Stop condition 3 (no progress) is not the same as the budget.** A loop that fails `lighting` three times in a row is not going to succeed on the fourth try — the critique is not landing, and the remaining budget is pure waste. Detecting *"same blocker twice"* typically recovers 15–30% of loop spend in systems that previously only stopped on `max_attempts`, and it converts an invisible failure into a labeled one (`no_progress`) that your dashboard can count.
+The cost property uses Claude Opus 5's August 2026 standard global rates: $5/MTok uncached input, $6.25/MTok for 5-minute cache writes, $10/MTok for 1-hour cache writes, $0.50/MTok cache reads, and $25/MTok output. The API reports the two write TTLs separately under `usage.cache_creation`; keep both because one aggregate write count cannot be priced correctly when a request mixes TTLs. ([Claude prompt-caching pricing and usage fields](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)) In production, load rates from versioned configuration so a pricing change does not silently corrupt historical comparisons.
 
-**`blocked_by` is a string, never a boolean.** The single highest-leverage instrumentation decision in loop engineering is refusing to log `passed: false` without a reason next to it. Every diagnostic query in §14.7 depends on that column existing.
+`attempt_cost_reserve_usd` makes the ceiling a preflight decision rather than an after-the-fact alert. Derive the reserve from the maximum tokens and tool spend one attempt is allowed to consume. If actual attempts can exceed the reservation, the ceiling is not hard; tighten the underlying token/tool limits or call it a target.
+
+**Stop condition 3 (no progress) is not the same as the budget.** If a loop fails `lighting` twice with effectively unchanged evidence, another blind attempt has little justification. The cause might be a critique that is not actionable, an ambiguous verifier, or a generator that cannot satisfy the request. Stopping with the label `no_progress` preserves the remaining budget and gives the team a category it can inspect instead of guessing from `failed`.
+
+**`blocked_by` is a string, never a boolean.** Refuse to log `passed: false` without a reason next to it. The blocker and recovery analyses in §14.7 depend on that reason existing.
 
 ---
 
-## 14.3 The Verifier Asymmetry Law
+## 14.3 Verifier Asymmetry: Separate Quality from Cost
 
-> **A self-correcting loop improves output only if verification is both cheaper and more reliable than generation. When it isn't, the loop amplifies error instead of removing it.**
+> **Under the independent-attempt model below, the verifier improves the
+> precision of accepted outputs when it rejects bad outputs more often than
+> good ones (`TPR > FPR`). Whether that improvement is worth buying is a
+> separate cost-and-latency decision.**
 
-This is the theoretical core of the module, and it explains why some loops work spectacularly and others make things worse.
+This distinction explains why some loops improve accepted quality but still
+lose on economics, while an inverted verifier can make both quality and cost
+worse. The worked arithmetic assumes independent, identically distributed
+attempts; correlated revisions need the empirical within-run metrics in §14.4.
 
 Let generation succeed with probability *p*. The verifier has two error rates, and the whole argument turns on keeping them separate:
 
@@ -260,7 +320,8 @@ print(f"{'no verifier (ship attempt 1)':28} good {P:.1%}  bad {1-P:.1%}  "
       f"precision {P:.1%}  attempts 1.00")
 for tpr, fpr, label in [(0.95, 0.05, "strong verifier"),
                         (0.70, 0.20, "mediocre verifier"),
-                        (0.55, 0.35, "weak verifier")]:
+                        (0.55, 0.35, "weak verifier"),
+                        (0.25, 0.40, "inverted verifier")]:
     r = loop_quality(p_generate=P, tpr=tpr, fpr=fpr, k=3)
     print(f"{label:28} good {r['accepted_good']:.1%}  bad {r['accepted_bad']:.1%}  "
           f"precision {r['precision_of_accepted']:.1%}  "
@@ -272,38 +333,45 @@ no verifier (ship attempt 1) good 70.0%  bad 30.0%  precision 70.0%  attempts 1.
 strong verifier              good 94.6%  bad 2.1%  precision 97.8%  attempts 1.42
 mediocre verifier            good 82.5%  bad 13.3%  precision 86.2%  attempts 1.47
 weak verifier                good 71.8%  bad 21.3%  precision 77.1%  attempts 1.58
+inverted verifier            good 62.2%  bad 33.3%  precision 65.1%  attempts 1.48
 ```
 
-Read the precision column against the no-verifier baseline. **The loop's entire value is a function of verifier quality, and it degrades far faster than the verifier does.** Dropping TPR from 0.95 to 0.55 — a verifier that is still better than a coin flip — takes precision from 97.8% to 77.1%: the loop now buys **seven points of precision for a 58% increase in attempts**, and ships a bad output one time in five.
+Read the precision column against the no-verifier baseline. The weak verifier
+still buys about seven points of accepted-output precision, but at a 58%
+increase in expected attempts and with 21.3% of all requests accepting a bad
+output. The inverted verifier has `TPR < FPR`; it pushes precision below the
+70% no-verifier baseline while also adding work. Retry count changes eventual
+acceptance and cost, but under these iid assumptions it does not repair a
+verifier whose acceptance signal points in the wrong direction.
 
-Worse, the mechanism of the collapse is invisible in aggregate metrics. Look at what the weak verifier does on a *single* attempt: it accepts only 45.5% of the good outputs the generator produced (0.70 × 0.65), throwing away a quarter of the correct work it was handed. The retries claw that back to 71.8% — so the pass rate looks fine while the system spends 1.58 attempts to end up barely ahead of shipping attempt 1 unchecked. **A high false-positive rate converts directly into loop cost**, and cost is where you will notice it first.
+Worse, the mechanism of the collapse is invisible in aggregate metrics. On a *single* attempt, the weak verifier rejects 35% of good outputs — 24.5 percentage points of all attempts (`0.70 × 0.35`). Retries recover some discarded work, so the final acceptance number can look respectable while the system spends 1.58 attempts to end up only modestly ahead of shipping attempt 1 unchecked. **A high false-positive rate converts directly into loop cost.**
 
 Three practical corollaries:
 
-1. **Evaluate the verifier before you deploy the loop.** Gate precision/recall against human labels (Module 02 §2.3.6) is a *prerequisite*, not a nice-to-have. A gate with κ < 0.4 — Cohen's kappa, agreement with human judgment beyond chance, where 1.0 is perfect and 0 is a coin flip — should not be allowed to reject anything.
-2. **Prefer verification tasks that are structurally easier than generation.** Running the test suite is a strictly easier problem than writing the code; checking whether an edited image added a garnish is strictly easier than producing the edit. When you cannot find an asymmetric verifier, you probably do not have a loop — you have a resampler.
+1. **Evaluate the verifier before you deploy the loop.** Gate precision and recall against expert labels (Module 02 §2.3.6) is a prerequisite. Report uncertainty and agreement per criterion. Cohen's κ is useful for chance-adjusted agreement, but there is no universal κ cutoff: the required precision depends on the cost of a false accept or false reject. A safety veto and a style suggestion should not share one threshold.
+2. **Prefer verification tasks that are easier and more objective than generation.** Running a well-designed test suite is usually easier to grade than writing the code; checking whether an edited image added a garnish can be narrower than producing the edit. When you cannot find that asymmetry, you may have a resampler rather than a self-correcting loop.
 3. **A resampler is a legitimate design, but call it one.** If your "verifier" is just the generator scoring itself, you are drawing best-of-K samples. That is fine and often effective — but its metric is best-of-K quality, not self-correction, and it does not justify a critique channel.
 
-> **Diagnostic:** plot mean score by attempt index. Genuine self-correction rises monotonically. A resampler produces a flat line with variance. If your line is *falling*, see §14.8 failure mode 3.
+> **Diagnostic:** compare score changes *within the same run* (`score_i - score_1`) for runs that reached attempt `i`. Do not simply compare the mean of all attempt-1 outputs with all attempt-3 outputs: only the harder cases reach attempt 3, so that survivor population can make a useful loop look worse. A rising within-run delta supports self-correction; a flat distribution suggests resampling; a negative tail is over-editing (§14.8 failure mode 3).
 
 ---
 
 ## 14.4 Loop Metrics: What to Actually Put on the Dashboard
 
-Single-response metrics do not survive contact with loops. Here is the replacement set, with the question each one answers.
+A loop needs metrics at two levels. **Within one run**, attempts are revisions that share history. **Across clean reruns**, trials measure stochastic reliability. Do not mix the two denominators.
 
-| Metric | Question it answers | Danger if unmeasured |
-|---|---|---|
-| **pass@K** | Does the loop eventually succeed? | — (usually the only one measured) |
-| **pass^K** | Does it succeed *every* time on the same input? | Ships luck as reliability (Module 01 §1.3b) |
-| **k-to-pass distribution** | Where does yield come from? | You fund attempt 3 when 96% of value is in attempt 1 |
-| **Marginal yield** `p(pass at i \| failed i−1)` | Is the next attempt worth buying? | K chosen by superstition |
-| **Regression rate** | How often does iterating make it *worse*? | Over-editing ships as improvement |
-| **Oscillation rate** | How often does the loop cycle between two states? | Invisible budget burn in the tail |
-| **Cost per accepted output** | What does one shippable result cost? | Per-call cost hides the 4× loop tax |
-| **Gate escape rate** | What fraction of defects got through everything? | The only metric users actually feel |
-| **False reject rate** | How much good work is the gate throwing away? | Silent quality ceiling |
-| **Loop tax** | Cost/latency multiple vs. a single attempt | Capacity planning by surprise |
+| Metric / eval | What it covers | Issue it catches | Decision it enables |
+|---|---|---|---|
+| **Accepted by attempt K** | One task-loop run, including its dependent revisions | A good final number that required too many retries | Keep, shorten, or remove the retry loop |
+| **Accepted-at distribution** | Which attempt first passed | Most value arriving on attempt 1 while later attempts add cost | Put effort into the first prompt or retain later attempts |
+| **Marginal yield** `P(accepted at i \| reached i)` | Conversion among runs that actually reached attempt `i` | A final attempt whose extra successes no longer pay for it | Choose K from value versus marginal cost |
+| **Within-run regression rate** | `final_score < first_score` on the same run | The checker editing good work into worse work | Keep the best attempt and recalibrate false rejects |
+| **Oscillation / no-progress rate** | Repeated outputs or blockers | Two criteria fighting, or critique that changes nothing | Stop early and repair the rubric or feedback channel |
+| **Cost per accepted output** | All successful and failed attempt spend | Cheap calls forming an expensive product result | Compare the loop with a stronger first attempt or human review |
+| **Gate escape rate** | Human-confirmed defects among accepted outputs | Bad work that every automated layer missed | Add a different gate or change the existing criterion |
+| **Gate false-reject rate** | Human-confirmed good outputs that the gate rejected | Correct work repeatedly discarded | Relax or rewrite the gate before increasing K |
+| **Loop tax** | Cost and latency versus one attempt | Tail retries breaking capacity assumptions | Set per-run limits and forecast real serving capacity |
+| **pass@k / pass^k across independent trials** | Fresh reruns from clean state | A system that can succeed once but is not dependable | Decide whether reliability is sufficient for unattended use |
 
 ```python
 """Loop metrics from a list of LoopResult rows. Drop-in for a nightly job."""
@@ -318,41 +386,58 @@ def loop_metrics(results: list[LoopResult], k: int) -> dict:
     # Where the yield comes from
     k_hist = Counter(r.accepted_at for r in accepted)
     marginal = {}
-    still_running = n
+    reached_hist = {}
     for i in range(1, k + 1):
         won = k_hist.get(i, 0)
-        marginal[i] = won / still_running if still_running else 0.0
-        still_running -= won
+        reached = sum(len(r.attempts) >= i for r in results)
+        reached_hist[i] = reached / n
+        marginal[i] = won / reached if reached else 0.0
 
     # Did iteration ever make things worse? (needs a score on every attempt)
     scored = [r for r in results if len(r.attempts) > 1
               and r.attempts[0].score is not None and r.attempts[-1].score is not None]
     regressed = [r for r in scored if r.attempts[-1].score < r.attempts[0].score]
 
-    single_attempt_cost = mean(r.attempts[0].input_tokens * 5e-6
-                               + r.attempts[0].output_tokens * 25e-6 for r in results)
+    first_attempts = [r.attempts[0] for r in results if r.attempts]
+    single_attempt_cost = (mean(a.input_tokens * 5e-6
+                                + a.cache_creation_5m_tokens * 6.25e-6
+                                + a.cache_creation_1h_tokens * 10e-6
+                                + a.cache_read_tokens * 0.5e-6
+                                + a.output_tokens * 25e-6
+                                for a in first_attempts)
+                           if first_attempts else None)
 
     return {
         "n": n,
-        "pass_at_k": len(accepted) / n,
-        "k_to_pass": {i: k_hist.get(i, 0) / n for i in range(1, k + 1)},
+        "accepted_by_k": sum(
+            r.outcome == "accepted"
+            and r.accepted_at is not None
+            and r.accepted_at <= k
+            for r in results
+        ) / n,
+        "accepted_at": {i: k_hist.get(i, 0) / n for i in range(1, k + 1)},
+        "reached_attempt": reached_hist,
         "marginal_yield": marginal,
         "regression_rate": len(regressed) / len(scored) if scored else None,
         "oscillation_rate": sum(r.outcome == "oscillated" for r in results) / n,
         "no_progress_rate": sum(r.outcome == "no_progress" for r in results) / n,
         "cost_per_accepted": (sum(r.cost_usd for r in results) / len(accepted)
                               if accepted else float("inf")),
-        "loop_tax": (sum(r.cost_usd for r in results) / n) / single_attempt_cost,
+        "loop_tax": ((sum(r.cost_usd for r in results) / n) / single_attempt_cost
+                     if single_attempt_cost else None),
         "mean_attempts": mean(len(r.attempts) for r in results),
     }
 ```
 
-### Reading a real-looking output
+### Reading a worked dataset
+
+The following numbers are **illustrative arithmetic**, not reported production results. Their purpose is to show how the metrics lead to decisions.
 
 ```
 n                  4,812
-pass_at_k          0.913
-k_to_pass          {1: 0.804, 2: 0.081, 3: 0.028}
+accepted_by_k      0.913
+accepted_at        {1: 0.804, 2: 0.081, 3: 0.028}
+reached_attempt    {1: 1.000, 2: 0.196, 3: 0.115}
 marginal_yield     {1: 0.804, 2: 0.413, 3: 0.243}
 regression_rate    0.061
 oscillation_rate   0.018
@@ -364,26 +449,26 @@ mean_attempts      1.29
 
 Everything you need to make three decisions is in there:
 
-- **Is attempt 3 worth keeping?** 11.5% of traffic reaches it and it converts 24.3% of those — **135 extra successes on 4,812 requests**, bought by running a third generate-and-verify cycle on 553 of them. Weigh that against the 6.1% regression rate, which is doing damage on the same population. This is now an arithmetic decision, not a taste one.
-- **Is the loop paying for itself?** pass@1 is 80.4%; pass@3 is 91.3%. Eleven points of quality for a 1.31× cost multiplier is usually an easy yes. If the loop tax were 3.8× for the same 11 points, it is usually a no — spend it on a better first attempt (higher `effort`) instead.
-- **Is anything pathological?** 6.1% regression and 1.8% oscillation are both real bugs with real fixes (§14.8), and both were completely invisible in the pass@3 number that a naive dashboard would have shown.
+- **Is attempt 3 worth keeping?** 11.5% of traffic reaches it and it converts 24.3% of those — about **135 extra successes on 4,812 requests**, bought by running a third generate-and-verify cycle on about 553 of them. Compare the value of those successes with their marginal cost, then inspect the separate 6.1% within-run regression signal before deciding.
+- **Is the loop paying for itself?** Acceptance rises from 80.4% on attempt 1 to 91.3% by attempt 3. Whether eleven points for a 1.31× cost multiplier is worthwhile depends on the value of a success and the harm of an escaped defect. The metric makes that trade-off explicit; it does not decide it for you.
+- **Is anything pathological?** In this scenario, 6.1% regression and 1.8% oscillation need investigation (§14.8). Both are invisible in the 91.3% final-acceptance number.
 
-> **The one-number trap.** "pass@3 = 91.3%" is the number every stakeholder wants and the number that hides all three findings above. Report pass@K *with* k-to-pass and regression rate, always, on the same slide.
+> **The one-number trap.** "Accepted by attempt 3 = 91.3%" hides all three findings above. Report it with the accepted-at distribution, marginal yield, regression rate, and cost per accepted output. Separately report pass@k or pass^k from clean independent trials when reliability matters.
 
 ---
 
 ## 14.5 Budgets and Stop Conditions
 
-Loops need a hard ceiling and a soft one. The hard ceiling is enforced by your code and the model cannot see it. The soft ceiling is *told to the model* so it can pace itself and finish gracefully rather than being guillotined mid-thought.
+Loops need hard controls and soft guidance. Hard controls terminate work even if the model would continue. Soft guidance lets the model pace itself and finish gracefully, but it is not a guarantee.
 
 Opus 5-era models expose this as a first-class parameter — a **task budget** — which is distinct from `max_tokens`:
 
-| Control | Enforced by | Model aware? | Behavior at the limit |
+| Control | Nature | Model aware? | Behavior at the limit |
 |---|---|---|---|
-| `max_tokens` | API | No | Hard truncation, `stop_reason: "max_tokens"` |
-| `output_config.task_budget` | API (beta) | **Yes** — server injects a countdown | Model prioritizes and wraps up |
-| Loop `max_attempts` | Your code | No | Loop exits |
-| Loop cost ceiling | Your code | No | Loop exits |
+| `max_tokens` | Hard API cap **per request** | No | Truncates with `stop_reason: "max_tokens"` |
+| `output_config.task_budget` | **Advisory** beta signal across the agentic loop | **Yes** — server injects a countdown | Model usually prioritizes and wraps up, but may exceed the target |
+| Loop `max_attempts` | Hard client-side cap | No | Orchestrator exits before another attempt |
+| Loop cost ceiling | Client-side accounting rule | No | Orchestrator refuses another attempt when the reserved budget is insufficient |
 
 ```python
 # pip install anthropic
@@ -404,9 +489,9 @@ with client.beta.messages.stream(
     response = stream.get_final_message()
 ```
 
-The budget counts what the model generates plus the tool results it reads *this turn* — not the full history you resend. Leave `remaining` unset in a normal loop; the server tracks the countdown. Only pass it explicitly if you compact or rewrite history between requests, because then the server can no longer derive prior spend.
+The task budget counts thinking, tool calls, tool results, and text across the agentic loop — not the full history your client resends on each request. Leave `remaining` unset in a normal loop so the server tracks the countdown. Pass it explicitly only when carrying a budget across client-side compaction. Most importantly, Anthropic documents task budgets as **advisory, not enforced**; pair them with `max_tokens` and client-side attempt/cost controls. ([Claude Platform task-budget documentation](https://platform.claude.com/docs/en/build-with-claude/task-budgets))
 
-**An eval-relevant warning about budget countdowns.** Surfacing a remaining-token count to the model changes behavior — models can wrap up prematurely or start worrying about running out of room. If you are A/B-ing a budget change, treat it as a **behavioral change, not just a cost control**, and re-run your quality evals. A budget that cuts cost 30% and quality 8% is a product decision, and you will only find out if you measured quality on the budgeted configuration.
+**An eval-relevant warning about budget countdowns.** Surfacing a remaining-token count to the model can change how it prioritizes work. If you A/B a budget change, treat it as a **behavioral change, not just a cost control**, and re-run quality evals on the budgeted configuration. Report quality and cost together.
 
 ### The stop-condition ladder
 
@@ -422,7 +507,7 @@ Order matters — check cheap conditions first, and always leave a labeled outco
    is still an `oscillated` run or an `exhausted` run, and you need both facts.
 ```
 
-Never collapse 2–4 into a single `failed`. They have different fixes: oscillation is a *critique quality* bug, no-progress is a *generator capability* bug, exhaustion is a *budget calibration* bug. A dashboard that shows only "failed: 8.7%" cannot tell you which of your three teams should be working on it.
+Never collapse 2–4 into a single `failed`. They point to different investigations: oscillation may expose conflicting criteria; no-progress may expose weak critique, an ambiguous gate, or a capability limit; exhaustion may expose an undersized budget or an unexpectedly hard input. The label narrows diagnosis, but it does not prove one root cause.
 
 ---
 
@@ -432,7 +517,7 @@ The verifier is where most of the eval engineering actually lives. Four patterns
 
 ### Pattern 1 — Deterministic pre-checks first
 
-The cheapest gate that can reject an output should run first. Schema validation, length bounds, forbidden-token checks, file-exists, exit-code, pixel-diff. These cost microseconds, have zero false-negative rate on the things they check, and are perfectly reliable — which makes them strictly better than an LLM gate for anything they can express.
+The cheapest gate that can reject an output should run first: schema validation, length bounds, forbidden-token checks, file existence, exit codes, or pixel differences. These checks are deterministic for the rule encoded in code and are usually cheaper and easier to debug than an LLM judge. They are not infallible: a wrong rule or buggy implementation can still reject good work or miss a defect.
 
 ```python
 def cheap_gate(output) -> dict | None:
@@ -448,42 +533,84 @@ A surprising amount of "our judge is expensive" turns out to be a judge being as
 
 ### Pattern 2 — Veto criteria above scored criteria
 
-Covered in depth in Module 08 Case Study 10: integrity constraints (safety, factual grounding, policy) are **binary vetoes evaluated in code**, never weighted terms in an average. The moment a constraint has a weight, it has an exchange rate, and the optimizer will find it.
+Covered in depth in Module 08 Case Study 10: integrity constraints (safety,
+factual grounding, policy) produce **PASS / FAIL / UNMEASURED decisions whose
+aggregation is enforced in code**, not weighted terms in an average. A measured
+failure vetoes; missing measurement blocks automated acceptance. The moment a
+must-not-violate constraint has a weight, it has an exchange rate, and an
+optimizer can trade it away for gains elsewhere.
 
 ```python
 score = 0.4 * plating + 0.3 * faithfulness + 0.3 * realism    # ❌ buys past a violation
-passed = all(vetoes) and (sum(scored) >= bar)                  # ✅ no exchange rate exists
+status = ("FAIL" if "FAIL" in vetoes
+          else "UNMEASURED" if "UNKNOWN" in vetoes
+          else "PASS" if sum(scored) >= bar
+          else "FAIL")                                        # ✅ no exchange rate exists
 ```
 
 ### Pattern 3 — Isolated per-criterion judge calls
 
-One judge call per criterion, each seeing only its own question. Halo effects are real and large: an eloquent answer scores higher on *factual accuracy* when the judge is also asked about eloquence in the same call. Isolation costs more calls and buys interpretability plus resistance to contamination between dimensions.
+Use one judge call per criterion when criteria can influence one another or need separate calibration. Isolation costs more calls, but it makes each rejection attributable and lets you measure precision and recall per criterion instead of hiding disagreement inside one omnibus score.
 
 ### Pattern 4 — Adversarial verification for high-stakes accepts
 
-For findings where a false accept is expensive, flip the judge's job from "is this good?" to "**refute this**" and require a majority to fail at refuting:
+For findings where a false accept is expensive, flip the judge's job from “is
+this good?” to “**try to refute this**.” Keep refusal and insufficient evidence
+separate from a measured refutation:
 
 ```python
-def adversarially_verify(claim: str, n: int = 3) -> bool:
-    """Survives only if a majority of independent skeptics cannot refute it."""
-    votes = []
-    for lens in ["correctness", "security", "does-it-actually-reproduce"][:n]:
+REFUTE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "verdict": {
+            "type": "string",
+            "enum": ["REFUTED", "NOT_REFUTED", "UNKNOWN"],
+        },
+        "evidence": {"type": "string"},
+    },
+    "required": ["verdict", "evidence"],
+    "additionalProperties": False,
+}
+
+
+def adversarially_verify(claim: str, n: int = 3) -> dict:
+    """Require complete coverage and a majority of measured non-refutations."""
+    if not 1 <= n <= 3:
+        raise ValueError("n must be between 1 and 3")
+    lenses = ["correctness", "security", "does-it-actually-reproduce"][:n]
+    reviews = []
+    for lens in lenses:
         r = client.messages.create(
             model=MODEL, max_tokens=2000,
             output_config={"effort": "high",
                            "format": {"type": "json_schema", "schema": REFUTE_SCHEMA}},
             messages=[{"role": "user", "content":
                        f"Try to REFUTE this claim through the {lens} lens: {claim}\n"
-                       "Default to refuted=true if you are uncertain."}],
+                       "Return UNKNOWN when the supplied evidence cannot decide."}],
         )
         if r.stop_reason == "refusal":
-            votes.append(True)                     # treat a refusal as a refutation
+            reviews.append({"lens": lens, "verdict": "UNKNOWN",
+                            "evidence": "reviewer refused"})
             continue
-        votes.append(json.loads(next(b.text for b in r.content if b.type == "text"))["refuted"])
-    return sum(not v for v in votes) > len(votes) / 2
+        review = json.loads(next(b.text for b in r.content if b.type == "text"))
+        reviews.append({"lens": lens, **review})
+
+    unknown = sum(row["verdict"] == "UNKNOWN" for row in reviews)
+    not_refuted = sum(row["verdict"] == "NOT_REFUTED" for row in reviews)
+    status = (
+        "UNMEASURED" if unknown
+        else "PASS" if not_refuted > len(reviews) / 2
+        else "FAIL"
+    )
+    return {"status": status, "coverage": (len(reviews) - unknown) / len(lenses),
+            "reviews": reviews}
 ```
 
-Note the **perspective diversity**: three verifiers with three different lenses catch failure modes that three identical verifiers cannot, for the same token cost. Redundancy without diversity is the correlated-layers mistake from Case Study 10 in miniature.
+`UNMEASURED` still blocks a high-stakes promotion, but it does not manufacture
+a claim that the finding was disproved. A measured `REFUTED` review must carry
+the evidence that supports that decision.
+
+The three prompts use different **perspectives**, but that does not make their errors independent: they still share a model and much of the context. Measure miss overlap on labeled cases. Keep the extra reviews only if they catch different defects; otherwise they add cost without meaningful coverage.
 
 ### Measuring layer independence
 
@@ -492,86 +619,121 @@ If you stack gates, measure whether they are genuinely independent. On a labeled
 ```python
 def layer_correlation(labels: list[bool], layer_a: list[bool], layer_b: list[bool]) -> dict:
     """Do these two gates fail on the same items? (labels: True = truly defective)"""
-    a_missed = [i for i, t in enumerate(labels) if t and layer_a[i] is False]
-    b_missed = [i for i, t in enumerate(labels) if t and layer_b[i] is False]
-    both = set(a_missed) & set(b_missed)
+    a_missed = {i for i, t in enumerate(labels) if t and layer_a[i] is False}
+    b_missed = {i for i, t in enumerate(labels) if t and layer_b[i] is False}
+    both = a_missed & b_missed
+    either = a_missed | b_missed
+    defective = sum(labels)
     return {
-        "a_miss_rate": len(a_missed) / sum(labels),
-        "b_miss_rate": len(b_missed) / sum(labels),
-        "overlap_of_misses": len(both) / max(len(a_missed), 1),   # 1.0 = same hole
+        "a_miss_rate": len(a_missed) / defective if defective else 0.0,
+        "b_miss_rate": len(b_missed) / defective if defective else 0.0,
+        "miss_jaccard": len(both) / len(either) if either else 0.0,
+        "a_miss_given_b_miss": len(both) / len(b_missed) if b_missed else 0.0,
+        "b_miss_given_a_miss": len(both) / len(a_missed) if a_missed else 0.0,
     }
 ```
 
-`overlap_of_misses` near 1.0 means your second layer is decorative. Vary the model family, the modality, or the framing until it drops.
+`miss_jaccard` is the intersection of the two miss sets divided by their union. It is symmetric: swapping layer A and B cannot change it. A value near 1.0 means the layers leave almost the same holes; a value near 0 means their observed misses differ. The two conditional rates show whether one layer's misses are mostly a subset of the other's. Change model family, modality, or framing only when the labeled evidence shows that the added layer is redundant.
 
 ---
 
 ## 14.7 Loop Observability
 
-You cannot debug a loop from its output. You debug it from a **flat, one-row-per-run table** where every decision has a column and every failure has a reason next to it.
+You cannot debug a loop from its final output. Keep three complementary records:
+
+1. **Run table — one row per run.** Outcome, accepted attempt, total cost, total latency, model/config version. Use it for product-level rates and cost.
+2. **Attempt table — one row per attempt.** Gate verdict, `blocked_by`, score, tokens, latency, and output hash. Use it for retry and failure analysis.
+3. **Raw nested trace.** Messages, tool calls, tool results, and environment events. Use it to understand one surprising run.
+
+Do not create `blocked_by_1`, `blocked_by_2`, … forever. Attempts are rows, not new columns. The `to_rows()` method in §14.2 emits the first two shapes.
+
+**Run row:**
 
 ```json
 {
   "run_id": "r_8812fa", "ts": "2026-08-06T09:14:22Z",
   "pipeline_version": "2026-08-01.2", "model": "claude-opus-5", "effort": "high",
   "outcome": "accepted", "attempts": 2, "accepted_at": 2,
-  "blocked_by_1": "grounding", "blocked_by_2": null,
-  "score_1": 0.61, "score_2": 0.88,
-  "gate_latency_ms_1": 1840, "gate_latency_ms_2": 1790,
-  "generate_latency_ms_1": 4200, "generate_latency_ms_2": 5100,
-  "input_tokens": 41200, "output_tokens": 3180,
-  "cache_read_tokens": 38900, "cost_usd": 0.0812,
+  "total_latency_ms": 12930, "cost_usd": 0.31120,
   "escalated": false, "human_review": false
 }
 ```
 
-**Why flat and not nested.** The people who need to answer questions about your loop include ops analysts, support leads, and PMs. A nested trace object requires a JSON path expression and a mental model of your orchestration; a flat row requires `GROUP BY`. Nested traces are for engineers debugging one run; flat rows are for everyone diagnosing patterns across a million. Emit both, but if you only build one, build the flat one — this is precisely the point Uber's team makes about their own pipeline logging (Case Study 10).
+**Attempt rows (JSON Lines):**
 
-### The four queries that diagnose 80% of loop problems
+Here `input_tokens` means uncached input tokens. Cache reads and writes at each TTL have their own fields and rates.
+
+```json
+{"run_id":"r_8812fa","attempt_index":1,"passed":false,"blocked_by":"grounding","score":0.61,"input_tokens":22100,"output_tokens":1710,"cache_read_tokens":19800,"cache_creation_5m_tokens":1000,"cache_creation_1h_tokens":0,"latency_ms":6040,"output_hash":"ae91..."}
+{"run_id":"r_8812fa","attempt_index":2,"passed":true,"blocked_by":null,"score":0.88,"input_tokens":19100,"output_tokens":1470,"cache_read_tokens":19100,"cache_creation_5m_tokens":0,"cache_creation_1h_tokens":0,"latency_ms":6890,"output_hash":"70bc..."}
+```
+
+The tabular views let an analyst use `GROUP BY`; the raw trace lets an engineer inspect causality. Neither replaces the other.
+
+### A documented failure: one trial left clues for the next
+
+Anthropic reports that, in internal agent evals, Claude sometimes gained an unfair advantage by reading Git history left by previous trials. The score then measured cross-trial state leakage as if it were agent capability. The fix is not a better model: start every trial in a clean environment and treat shared files, caches, and resource exhaustion as harness failures. ([Anthropic, “Demystifying evals for AI agents,” 2026](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents))
+
+| Eval | What it covered | What it caught | What to improve |
+|---|---|---|---|
+| Environment-isolation check | Files, database state, caches, and resources at trial start | Git history from earlier trials leaked useful information | Reset from a known snapshot before every independent trial |
+| Trace review | What evidence the agent actually used | The agent solved part of the task from leaked history | Separate model success from harness contamination |
+| Clean rerun | Same task after state reset | Whether the apparent gain survives without leaked clues | Replace the inflated score with a valid capability estimate |
+
+### Four diagnostic queries
 
 ```sql
 -- 1. Where does the loop actually spend its retries?
-SELECT blocked_by_1, COUNT(*) n, AVG(attempts) avg_attempts,
-       AVG(CASE WHEN outcome='accepted' THEN 1.0 ELSE 0 END) recovery_rate
-FROM runs WHERE pipeline_version = '2026-08-01.2'
-GROUP BY 1 ORDER BY n DESC;
--- A blocker with a LOW recovery rate is a generator capability gap.
--- A blocker with a HIGH recovery rate and high volume is a first-attempt prompt bug.
+SELECT a.blocked_by, COUNT(*) AS rejected_attempts,
+       AVG(CASE WHEN next_a.passed THEN 1.0 ELSE 0.0 END) AS next_attempt_recovery
+FROM attempts a
+LEFT JOIN attempts next_a
+  ON next_a.run_id = a.run_id AND next_a.attempt_index = a.attempt_index + 1
+WHERE NOT a.passed
+GROUP BY a.blocked_by ORDER BY rejected_attempts DESC;
+-- Recovery is a triage signal, not a root-cause verdict. Read sample traces.
 
--- 2. Is iteration making things worse? (the metric nobody logs)
-SELECT COUNT(*) FILTER (WHERE score_2 < score_1) * 1.0 / COUNT(*) AS regression_rate
-FROM runs WHERE attempts >= 2;
+-- 2. Is the final attempt worse than the first on the same run?
+SELECT AVG(CASE WHEN last_a.score < first_a.score THEN 1.0 ELSE 0.0 END) AS regression_rate
+FROM runs r
+JOIN attempts first_a ON first_a.run_id = r.run_id AND first_a.attempt_index = 1
+JOIN attempts last_a  ON last_a.run_id = r.run_id AND last_a.attempt_index = r.attempts
+WHERE r.attempts >= 2 AND first_a.score IS NOT NULL AND last_a.score IS NOT NULL;
 
 -- 3. What does one shippable output cost, including failures?
-SELECT SUM(cost_usd) / COUNT(*) FILTER (WHERE outcome = 'accepted') AS cost_per_accepted
+SELECT SUM(cost_usd)
+       / NULLIF(SUM(CASE WHEN outcome = 'accepted' THEN 1 ELSE 0 END), 0)
+       AS cost_per_accepted
 FROM runs;
 
 -- 4. Is prompt caching actually working in the loop?
-SELECT AVG(cache_read_tokens * 1.0 / NULLIF(input_tokens, 0)) AS cache_hit_ratio
-FROM runs;   -- near 0 across repeated runs => a silent cache invalidator (module 15 §15.5)
+SELECT AVG(cache_read_tokens * 1.0
+           / NULLIF(input_tokens + cache_read_tokens
+                    + cache_creation_5m_tokens + cache_creation_1h_tokens, 0)) AS cache_hit_ratio
+FROM attempts;   -- near 0 across repeated prefixes => inspect cache invalidation (module 15 §15.5)
 ```
 
-Query 4 deserves a note. Loops re-send a large shared prefix on every attempt, so they are the single biggest beneficiary of prompt caching in any AI system — and also the place where a stray timestamp in the system prompt costs the most. A loop with a broken cache pays full price for the same 40K-token prefix three times per request.
+Loops often resend a large shared prefix on every attempt, so cache behavior can materially change their cost. A low hit ratio does not itself prove a bug—the prefix may genuinely differ—but it tells you which traces to inspect for accidental invalidators such as timestamps or reordered content.
 
 ---
 
 ## 14.8 The Loop Failure Catalog
 
-Nine failure modes, their signatures in the flat log, and their fixes.
+Nine failure modes, their signatures in the run/attempt tables, and the next action each suggests.
 
 | # | Failure | Log signature | Fix |
 |---|---|---|---|
-| 1 | **Blind retry** | `blocked_by_1 == blocked_by_2 == blocked_by_3` | Critique channel isn't wired, or the critique is generic ("try harder"). Feed the specific evidence into the next prompt. |
+| 1 | **Blind retry** | Consecutive attempt rows have the same blocker and little output change | Critique may be missing or generic ("try harder"). Feed specific evidence into the next prompt, then re-test. |
 | 2 | **Oscillation** | `output_hash` repeats; blockers alternate A/B/A | Two criteria are in tension. Rank them explicitly, or merge into one criterion with a stated trade-off. |
-| 3 | **Over-editing regression** | `score_final < score_first` on 5%+ of runs | Gate rejects too aggressively (high FPR). Add "if the current output already satisfies the criterion, PASS" to the judge prompt, and keep the best-scoring attempt rather than the last. |
-| 4 | **Verifier collusion** | Gate pass rate ≫ human pass rate on the same items | Generator and verifier share a model and prompt lineage. Vary model family or framing; re-calibrate against human labels. |
+| 3 | **Over-editing regression** | `final_score < first_score` on a material share of multi-attempt runs | Measure false rejects, preserve the best valid attempt, and inspect whether the critique causes unrelated edits. |
+| 4 | **Correlated verifier error** | Automated acceptance is much higher than human acceptance on the same sample | Generator and verifier may share blind spots. Recalibrate first; add a genuinely different verifier only if labeled misses justify it. |
 | 5 | **Budget starvation** | `outcome = "exhausted"` clusters on long inputs | Budget scaled to the mean, not the tail. Make the budget input-size dependent. |
-| 6 | **Retry amplification** | p99 cost ≫ 10× median | No cost ceiling per run; one pathological input eats the daily budget. Add per-run ceiling + circuit breaker. |
+| 6 | **Retry amplification** | Tail cost is many times the median and concentrated in a small slice | Add per-run reservation/ceiling and a circuit breaker; inspect the expensive slice. |
 | 7 | **Gate drift** | Gate pass rate moves with no code change | Model version, upstream data, or judge prompt changed. Pin versions; run the gate's own eval set on a schedule. |
-| 8 | **Reward hacking the gate** | Pass rate up, human quality flat or down | The generator learned the gate's tells. Rotate held-out criteria; audit accepted outputs by hand. |
+| 8 | **Reward hacking the gate** | Automated acceptance rises while blinded human quality is flat or down | Keep held-out criteria, audit accepted outputs, and prevent the optimizer from reading the promotion holdout. |
 | 9 | **Loop masking an upstream bug** | High attempt counts on one input segment | The loop is compensating for bad routing/retrieval. Fix upstream — a loop is an expensive way to paper over a broken input. |
 
-Failure 9 is the most expensive one in practice and the hardest to see, because the loop *works*: quality is acceptable and nobody investigates. The tell is always the same — **attempt count correlated with an input attribute**. If documents from one source consistently need three attempts, the loop is silently paying to repair an upstream extraction bug that costs nothing to fix at the source.
+Failure 9 can remain hidden because the loop *works*: final quality looks acceptable, so nobody asks why one input slice needs more attempts. The useful signal is **attempt count correlated with an input attribute**. If documents from one source consistently need three attempts, sample their traces and test the upstream extraction path before spending more on retries.
 
 ```sql
 -- Failure 9 detector: run this weekly, on whatever segments you have.
@@ -609,24 +771,26 @@ DIAGNOSIS_SCHEMA = {
         "regressed_slice": {"type": "string"},
         "hypothesis": {"type": "string"},
         "evidence_run_ids": {"type": "array", "items": {"type": "string"}},
-        "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+        "alternative_hypotheses": {
+            "type": "array", "items": {"type": "string"}
+        },
         "proposed_change": {"type": "string"},
         "falsifying_test": {"type": "string",
                             "description": "What result would prove this hypothesis WRONG?"},
     },
     "required": ["regressed_slice", "hypothesis", "evidence_run_ids",
-                 "confidence", "proposed_change", "falsifying_test"],
+                 "alternative_hypotheses", "proposed_change", "falsifying_test"],
     "additionalProperties": False,
 }
 ```
 
-The `falsifying_test` field is not decoration. Requiring the diagnosis agent to state what would disprove its own hypothesis is the cheapest available defense against confident, plausible, wrong causal stories — and it gives your offline gate something concrete to run.
+The `falsifying_test` field is not decoration. Requiring the diagnosis agent to state what would disprove its hypothesis turns a plausible story into something the offline gate can test. Treat the diagnosis as a hypothesis until that test runs.
 
 ### The Goodhart guardrails
 
 > **A system that optimizes prompts against a benchmark, and also decides when the benchmark is satisfied, will eventually optimize the benchmark.**
 
-Five guardrails, in descending order of importance:
+Five useful guardrails:
 
 | Guardrail | Prevents |
 |---|---|
@@ -653,28 +817,35 @@ class GoldenSet:
         return self.holdout
 ```
 
-That exception is not paranoia. The failure it prevents — an engineer adding "just a quick check" of the holdout to the optimization loop under deadline — is how holdouts die, and it dies silently: every metric keeps improving while the product stops improving.
+The access check prevents an optimization process from repeatedly querying the promotion holdout. Once candidate changes are selected using those examples, they are no longer an unbiased final test; rotate or replace them and record every read.
 
 ### Promotion gate
 
 ```python
 def can_promote(candidate: dict, baseline: dict, guardrails: dict) -> tuple[bool, str]:
-    """A promotion needs a real quality win AND no guardrail breach. Both."""
-    if candidate["holdout_score"] <= baseline["holdout_score"] + 0.01:
+    """Require a meaningful, statistically supported win and intact guardrails."""
+    delta = candidate["holdout_score"] - baseline["holdout_score"]
+    if delta < candidate["minimum_effect"]:
         return False, "no material gain on frozen holdout"
+    if candidate["holdout_delta_ci_low"] <= 0:
+        return False, "quality gain is uncertain: paired interval crosses zero"
     for name, (value, floor) in guardrails.items():
         if value < floor:
             return False, f"guardrail breach: {name} = {value:.3f} < floor {floor:.3f}"
-    if candidate["cost_per_accepted"] > baseline["cost_per_accepted"] * 1.25:
-        return False, "cost regression > 25%"
+    if (candidate["cost_per_accepted"]
+            > baseline["cost_per_accepted"] * candidate["max_cost_multiplier"]):
+        allowed = candidate["max_cost_multiplier"] - 1
+        return False, f"cost regression exceeds policy limit of {allowed:.0%}"
     return True, "promote to canary"
 ```
+
+`minimum_effect` is the smallest gain the product considers worth shipping. `holdout_delta_ci_low` should come from a **paired** confidence interval because the candidate and baseline are evaluated on the same cases; bootstrap the per-case score differences rather than treating the two scores as unrelated samples. `max_cost_multiplier` is also product policy, not a universal 25% rule. A candidate must clear all three questions: *is the gain large enough, is it supported by the sample, and did it preserve guardrails?*
 
 ---
 
 ## 14.10 The Loop as a Platform Primitive
 
-Loop engineering is being productized. Anthropic's **Managed Agents** exposes an *Outcome*: you state what "done" looks like as a gradeable rubric, and the platform runs the iterate → grade → revise loop for you, with an independent grader in its own context window.
+Loop engineering is being productized. Anthropic's beta **Managed Agents** API exposes an *Outcome*: you state what "done" looks like as a gradeable rubric, and the platform can run evaluate → revise cycles. The API currently allows 3 cycles by default and at most 20. ([Claude Managed Agents API reference](https://platform.claude.com/docs/en/api/typescript/beta/sessions/threads))
 
 ```python
 # The task loop of §14.2, as a platform call.
@@ -685,7 +856,7 @@ session = client.beta.sessions.create(
         "type": "user.define_outcome",
         "description": "Produce a reconciliation report for Q3 as .xlsx",
         "rubric": {"type": "text", "content": RUBRIC_MD},   # explicit, gradeable criteria
-        "max_iterations": 5,                                 # the K in pass@K
+        "max_iterations": 5,                                 # dependent revision cycles
     }],
 )
 ```
@@ -693,17 +864,17 @@ session = client.beta.sessions.create(
 **This does not remove the eval work — it relocates it.** You now own the rubric, and the rubric *is* the verifier, which means every principle in §14.3 and §14.6 still applies:
 
 - Vague criteria ("the report should look professional") produce noisy loops. Gradeable criteria ("every row has a numeric `variance` column; totals tie to the GL within $1") produce convergent ones.
-- The grader's verdicts arrive as `span.outcome_evaluation_end` events with a `result` field. **The distribution of those results is your loop dashboard**, for free:
+- The grader's verdicts arrive as `span.outcome_evaluation_end` events with a `result` field. Aggregate those events into the same loop dashboard used for a custom orchestrator:
 
 | `result` | Meaning | What a high rate tells you |
 |---|---|---|
 | `satisfied` | Rubric met | Healthy |
 | `needs_revision` | Iterating | Normal in moderation; check the k-distribution |
-| `max_iterations_reached` | Ran out of attempts | Budget too tight, or rubric unachievable |
-| `failed` | Rubric doesn't match the task | **Your rubric contradicts the description** — a spec bug, not a model bug |
+| `max_iterations_reached` | Criteria still unmet when revision budget ended | Inspect failed criteria: budget, capability, or task difficulty may be responsible |
+| `failed` | Grader says the rubric does not apply to the deliverables | Inspect the event explanation for a task/rubric/deliverable mismatch |
 | `interrupted` | Client interrupted | — |
 
-A rising `failed` rate is the single most useful early signal a platform loop gives you, because it is almost never the model — it is your specification disagreeing with itself.
+A rising `failed` rate is different from a rising `needs_revision` rate. The former points to a rubric that does not apply to what was delivered; the latter says the rubric applies but criteria were not met. Keep them separate so a specification problem is not filed as a model-quality regression.
 
 ---
 
@@ -716,14 +887,15 @@ A rising `failed` rate is the single most useful early signal a platform loop gi
 - [ ] Integrity constraints are vetoes in code, not weighted rubric terms
 - [ ] Every rejection produces a `blocked_by` reason and an actionable critique
 - [ ] Stop conditions cover: success, oscillation, no-progress, budget — each with a distinct label
-- [ ] Per-run cost ceiling exists and is enforced independently of attempt count
+- [ ] Per-run cost policy exists; the orchestrator reserves enough budget before starting another attempt
 - [ ] An escalation path exists and is instrumented (never a silent fallthrough)
-- [ ] Flat, one-row-per-run logging with a column per decision
-- [ ] `k` chosen from a measured marginal-yield curve, not by default
+- [ ] One run row, one row per attempt, and a raw trace linked by `run_id`
+- [ ] Maximum attempts chosen from a measured marginal-yield curve, not by default
+- [ ] Standard pass@k/pass^k measured separately on clean independent trials when reliability matters
 
 **Weekly, in production:**
 
-- [ ] k-to-pass distribution and marginal yield (is the last attempt still earning its keep?)
+- [ ] Accepted-at distribution and marginal yield (is the last attempt still earning its keep?)
 - [ ] Regression rate — is iteration making outputs worse?
 - [ ] Oscillation and no-progress rates
 - [ ] Cost per accepted output and loop tax
@@ -745,16 +917,16 @@ A rising `failed` rate is the single most useful early signal a platform loop gi
 ## 14.12 Exercises
 
 ### Exercise 1: Instrument an existing loop
-Take any retry logic you have in production. Add `blocked_by`, per-attempt scores, and a flat log row. Run it for a week, then compute the k-to-pass distribution and the regression rate. Predict both numbers *before* you look. Most people are wrong about the regression rate by 3–5×.
+Take any retry logic you have in production. Add `blocked_by`, per-attempt scores, one run row, and one row per attempt. Run it on a representative sample, then compute the accepted-at distribution and regression rate. Predict both before looking; write down which engineering decision would change at each plausible result.
 
 ### Exercise 2: Verifier asymmetry
-Measure your gate's precision and recall against 200 human labels. Plug them into `loop_quality()` from §14.3. Compute the accepted-good rate with and without the loop. If the loop lowers it, you have found a real bug worth more than the rest of the exercise.
+Measure your gate's precision and recall against an expert-labeled sample large enough to show useful uncertainty bounds. Plug the point estimates and plausible low/high values into `loop_quality()` from §14.3. Compute the accepted-good rate with and without the loop. If the conclusion changes across the interval, collect more labels before shipping a reject-and-retry policy.
 
 ### Exercise 3: Choose K from data
 Compute marginal yield per attempt index. Find the attempt where marginal successes × value-per-success drops below marginal cost. Compare to your current K. Write the one-paragraph justification you would give a finance partner.
 
 ### Exercise 4: Break your own Swiss cheese
-Take two stacked gates. Compute `overlap_of_misses` on a labeled set. If it exceeds 0.6, redesign one layer (different model family, different modality, or different framing) and re-measure. Report the escape-rate change.
+Take two stacked gates. Compute `miss_jaccard` and both conditional miss rates on a labeled set. Inspect the shared misses. Redesign one layer only if the evidence shows redundant coverage, then re-measure escape rate and cost.
 
 ### Exercise 5: Attack your own outer loop
 Write a prompt change that improves the visible golden-set score while making the product worse (hint: exploit an under-specified rubric criterion). If you succeed easily, your guardrail metrics have a gap. Fix the gap, not the prompt.

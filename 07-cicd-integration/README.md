@@ -1,8 +1,23 @@
 # Module 7: CI/CD Integration
 
+## In Plain English
+
+A CI eval gate should answer one narrow question: **is there enough evidence that this change is safe to advance?** Deterministic invariants may block on one failure; stochastic quality metrics need paired cases, adequate sample size, coverage checks, and an explicit tolerated effect. A red build should always point to cases and a decision—not merely a number that moved.
+
 ## 7.1 Why Integrate Evals in CI/CD?
 
 Traditional software uses unit tests and integration tests in CI/CD. For AI systems, you need **evaluation gates** that catch quality regressions before they reach production.
+
+| Gate or report | What it covers | Issue it catches | Decision it enables |
+|---|---|---|---|
+| Deterministic smoke checks | Schemas, forbidden actions, tool contracts, required fields | A prompt change makes every tool call invalid JSON | Block immediately with the exact invariant failure |
+| Must-pass safety cases | Non-compensatory high-severity behavior | Average quality rises while one jailbreak or data-exfiltration case fails | Stop release; quality gains cannot average away the breach |
+| Paired baseline/candidate comparison | Per-case change on the same eval set | A headline mean hides that the candidate fixed easy cases but regressed the costly failure mode | Block, approve, or inspect the disagreement set |
+| Coverage and evaluator status | Whether the reported denominator includes attempted cases | Judge refusals/timeouts disappear and make the pass rate look better | Fail as unmeasured rather than accidentally pass |
+| Repeated-run instability report | Variation from model, judge, or harness across trials | One borderline case alternates between pass and fail | Clarify the rubric, increase trials, or remove it from a hard gate |
+| Canary deployment | Real behavior and operational guardrails on limited traffic | Offline score holds but latency, tool errors, or task completion regress | Roll back or continue gradual rollout |
+
+The gate threshold belongs to the product’s failure cost and the suite’s statistical resolution. A familiar percentage is not evidence that the suite can detect a change that small.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -119,6 +134,7 @@ name: AI Evaluation Pipeline
 on:
   push:
     branches: [main, develop]
+    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -192,7 +208,6 @@ jobs:
   core-evals:
     runs-on: ubuntu-latest
     needs: fast-evals
-    if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
       
@@ -260,19 +275,16 @@ jobs:
               body: comment
             });
       
-      - name: Fail on regression
+      - name: Fail on statistically resolved regression
         run: |
-          python scripts/check_regression.py comparison.json --max-regression 0.05
+          python -c "import json,sys; c=json.load(open('comparison.json')); sys.exit(1 if c['has_regressions'] else 0)"
       
-      - name: Update baseline (on success)
-        if: success()
-        run: |
-          cp results/core.json baselines/main.json
-          git config user.name github-actions
-          git config user.email github-actions@github.com
-          git add baselines/main.json
-          git commit -m "Update eval baseline [skip ci]" || true
-          git push
+      - name: Upload candidate baseline for explicit approval
+        if: success() && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-main-baseline
+          path: results/core.json
 
   # Stage 4: Comprehensive evals (pre-release)
   comprehensive-evals:
@@ -436,7 +448,13 @@ class EvalRunner:
         """Generate model outputs for all samples"""
         
         async def generate_one(sample):
-            cache_key = f"output:{hash(sample['input'])}"
+            import hashlib
+            identity = json.dumps({
+                'input': sample['input'],
+                'model': str(model),
+                'suite': self.suite,
+            }, sort_keys=True)
+            cache_key = "output:" + hashlib.sha256(identity.encode()).hexdigest()
             if cache_key in self.cache:
                 return self.cache[cache_key]
             
@@ -470,7 +488,15 @@ class EvalRunner:
             }
             
             for eval_name, evaluator in self.evaluators.items():
-                cache_key = f"eval:{eval_name}:{hash(output)}"
+                import hashlib
+                identity = json.dumps({
+                    'evaluator': eval_name,
+                    'input': sample['input'],
+                    'output': output,
+                    'expected': sample.get('expected_output'),
+                    'suite': self.suite,
+                }, sort_keys=True)
+                cache_key = "eval:" + hashlib.sha256(identity.encode()).hexdigest()
                 
                 if cache_key in self.cache:
                     score = self.cache[cache_key]
@@ -502,15 +528,22 @@ class EvalRunner:
         
         # By evaluator
         for eval_name in self.evaluators.keys():
-            scores = [r['scores'].get(eval_name, {}).get('score', 0) 
-                     for r in results if r['scores'].get(eval_name)]
+            measured_rows = [
+                r['scores'][eval_name]
+                for r in results
+                if eval_name in r['scores']
+                and r['scores'][eval_name].get('score') is not None
+                and r['scores'][eval_name].get('passed') is not None
+            ]
+            scores = [row['score'] for row in measured_rows]
             
             if scores:
                 aggregated['by_evaluator'][eval_name] = {
                     'mean': sum(scores) / len(scores),
                     'min': min(scores),
                     'max': max(scores),
-                    'pass_rate': sum(1 for s in scores if s >= 0.5) / len(scores)
+                    'pass_rate': sum(row['passed'] is True for row in measured_rows) / len(measured_rows),
+                    'n': len(scores),
                 }
         
         # Overall score (weighted average)
@@ -529,11 +562,29 @@ class EvalRunner:
             weighted_sum += stats['mean'] * weight
             total_weight += weight
         
-        aggregated['overall']['score'] = weighted_sum / total_weight if total_weight else 0
-        aggregated['overall']['pass_rate'] = sum(
-            1 for r in results 
-            if all(s.get('score', 0) >= 0.5 for s in r['scores'].values())
-        ) / len(results)
+        aggregated['overall']['score'] = weighted_sum / total_weight if total_weight else None
+        case_verdicts = []
+        for row in results:
+            expected = [row['scores'].get(name) for name in self.evaluators]
+            if all(item is not None and item.get('passed') is not None for item in expected):
+                case_verdicts.append(all(item['passed'] is True for item in expected))
+        aggregated['overall']['pass_rate'] = (
+            sum(case_verdicts) / len(case_verdicts) if case_verdicts else None
+        )
+        expected_measurements = len(results) * len(self.evaluators)
+        measured = sum(
+            1 for r in results for score in r['scores'].values()
+            if score and score.get('score') is not None and score.get('passed') is not None
+        )
+        aggregated['overall']['coverage'] = (
+            measured / expected_measurements if expected_measurements else 0.0
+        )
+        # Safety is a must-pass dimension; a high style/quality score must not
+        # average away a safety failure.
+        aggregated['overall']['all_must_pass'] = bool(results) and all(
+            r['scores'].get('safety', {}).get('passed') is True
+            for r in results
+        )
         
         return aggregated
 
@@ -561,9 +612,14 @@ def main():
     
     # Check threshold
     overall_score = results['aggregated']['overall']['score']
+    if overall_score is None:
+        print("❌ FAILED: no measured results")
+        sys.exit(1)
     print(f"\nOverall Score: {overall_score:.3f}")
     print(f"Threshold: {args.threshold}")
-    
+    if not results['aggregated']['overall']['all_must_pass']:
+        print("❌ FAILED: a must-pass safety check failed")
+        sys.exit(1)
     if overall_score < args.threshold:
         print(f"❌ FAILED: Score {overall_score:.3f} < threshold {args.threshold}")
         sys.exit(1)
@@ -585,10 +641,16 @@ from typing import Dict
 
 def compare_results(current: Dict, baseline: Dict) -> Dict:
     """Compare current results with baseline"""
+    current_score = current['aggregated']['overall']['score']
+    baseline_score = baseline['aggregated']['overall']['score']
+    if current_score is None or baseline_score is None:
+        raise ValueError(
+            "current and baseline must both contain measured overall scores"
+        )
     
     comparison = {
-        'current_score': current['aggregated']['overall']['score'],
-        'baseline_score': baseline['aggregated']['overall']['score'],
+        'current_score': current_score,
+        'baseline_score': baseline_score,
         'metrics': {},
         'regressions': [],
         'improvements': []
@@ -612,7 +674,9 @@ def compare_results(current: Dict, baseline: Dict) -> Dict:
         # See the box below: a 2% gate on a 200-case suite fires on noise.
         # `min_detectable` is computed from the suite size, and a delta smaller
         # than it is reported as INDETERMINATE rather than as a pass or a fail.
-        n = current['aggregated']['by_evaluator'][eval_name].get('n', 0)
+        current_n = current['aggregated']['by_evaluator'][eval_name].get('n', 0)
+        baseline_n = baseline['aggregated']['by_evaluator'].get(eval_name, {}).get('n', 0)
+        n = min(current_n, baseline_n)
         min_detectable = minimum_detectable_effect(baseline_mean, n)
 
         if delta < -min_detectable:
@@ -673,7 +737,7 @@ def required_n(baseline: float, mde: float, power: float = 0.80) -> int:
 
 > ### ⚠️ Sizing your gate: the threshold most CI configs get wrong
 >
-> The `--max-regression 0.05` and `delta < -0.02` above are the defaults almost every team ships, and on a realistically-sized eval suite **both are below the noise floor**. From the sample-size arithmetic in Module 15 §15.2, detecting a drop from an 85% baseline needs roughly:
+> Fixed rules such as `--max-regression 0.05` or `delta < -0.02` are common defaults, and on a realistically-sized eval suite they may be below the noise floor. The script above deliberately derives its gate from sample size instead of exposing an inert fixed-threshold flag. From the sample-size arithmetic in Module 15 §15.2, detecting a drop from an 85% baseline needs roughly:
 >
 > | Change you want to catch | Cases needed (per arm) |
 > |---|---:|
@@ -699,7 +763,6 @@ def main():
     parser.add_argument('current', help='Current results JSON file')
     parser.add_argument('baseline', help='Baseline results JSON file')
     parser.add_argument('--output', required=True, help='Output comparison file')
-    parser.add_argument('--max-regression', type=float, default=0.05)
     
     args = parser.parse_args()
     
@@ -740,7 +803,7 @@ if __name__ == '__main__':
 
 ## 7.4 Handling Non-Determinism
 
-AI outputs are inherently non-deterministic. Here's how to handle this in CI/CD:
+Hosted generative outputs may vary across calls. Here's how to handle that variability in CI/CD while keeping deterministic software checks deterministic:
 
 ### 7.4.1 Deterministic Testing Mode
 
@@ -752,8 +815,9 @@ class DeterministicEvalConfig:
         # Fix random seeds
         self.seed = 42
         
-        # Use temperature 0 for deterministic outputs
-        self.model_temperature = 0.0
+        # Sampling controls are model-specific; do not assume temperature=0
+        # exists or guarantees identical output.
+        self.model_temperature = None
         
         # Cache all LLM calls
         self.use_cache = True
@@ -769,12 +833,11 @@ def setup_deterministic_mode():
     random.seed(42)
     np.random.seed(42)
     
-    # Set environment variables for model APIs
-    import os
-    os.environ['OPENAI_SEED'] = '42'
+    # Pass any provider-supported seed explicitly in that provider's request.
+    # An OPENAI_SEED environment variable is not an API setting.
 ```
 
-> **⚠️ Honest naming: this is variance-*reduction* mode, not determinism.** Temperature 0 and seed parameters do **not** guarantee identical outputs from modern hosted models — mixture-of-experts routing, dynamic batching, and provider-side infrastructure changes all introduce run-to-run variation, and OpenAI documents its `seed` parameter as best-effort (Anthropic offers none). Two consequences: (1) the only *truly* deterministic layer is the cache — identical inputs should never hit the API twice; (2) any gate built on "same input ⇒ same output" will flake. Treat every eval score as a **sample from a distribution** and gate statistically — which is exactly what 7.4.2 and 7.4.3 below do. The judge is stochastic too: for high-stakes verdicts near a threshold, re-judge 3× and take the majority rather than trusting one sample.
+> **⚠️ Honest naming: this is variance-*reduction* mode, not determinism.** Temperature 0 and seed parameters do **not** guarantee identical outputs from modern hosted models — mixture-of-experts routing, dynamic batching, and provider-side infrastructure changes all introduce run-to-run variation, and OpenAI documents its `seed` parameter as best-effort (Anthropic offers none). Two consequences: (1) the only *truly* deterministic layer is the cache — identical inputs should never hit the API twice; (2) any gate built on "same input ⇒ same output" will flake. Treat every eval score as a **sample from a distribution** and gate statistically — which is exactly what 7.4.2 and 7.4.3 below do. The judge is stochastic too: repeated judging and majority vote may reduce variance, but only use that policy after measuring its TPR/TNR, correlation, cost, and refusal coverage against held-out human labels.
 
 ### 7.4.1b How Many Test Cases Do You Actually Need?
 
@@ -813,22 +876,20 @@ class StatisticalEvalComparator:
         current_mean = np.mean(current_scores)
         baseline_mean = np.mean(baseline_scores)
         
-        # Welch's t-test (doesn't assume equal variances)
-        t_stat, p_value = stats.ttest_ind(
-            current_scores, 
-            baseline_scores, 
-            equal_var=False
-        )
+        if len(current_scores) != len(baseline_scores) or not current_scores:
+            raise ValueError("paired comparisons require non-empty, equal-length score lists")
+
+        # Candidate and baseline run on the same cases: test paired deltas.
+        t_stat, p_value = stats.ttest_rel(current_scores, baseline_scores)
         
         # Effect size (Cohen's d)
-        pooled_std = np.sqrt(
-            (np.var(current_scores) + np.var(baseline_scores)) / 2
-        )
-        cohens_d = (current_mean - baseline_mean) / pooled_std if pooled_std > 0 else 0
+        deltas = np.asarray(current_scores) - np.asarray(baseline_scores)
+        delta_std = np.std(deltas, ddof=1) if len(deltas) > 1 else 0
+        cohens_d = np.mean(deltas) / delta_std if delta_std > 0 else 0
         
         # Confidence interval for difference
-        n1, n2 = len(current_scores), len(baseline_scores)
-        se = np.sqrt(np.var(current_scores)/n1 + np.var(baseline_scores)/n2)
+        n1 = n2 = len(deltas)
+        se = delta_std / np.sqrt(len(deltas)) if len(deltas) > 1 else 0
         ci_low = (current_mean - baseline_mean) - 1.96 * se
         ci_high = (current_mean - baseline_mean) + 1.96 * se
         
@@ -917,7 +978,7 @@ class FlakyEvalDetector:
             'variance': variance,
             'is_flaky': is_flaky,
             'individual_runs': results,
-            'confidence': 1 - variance  # Lower variance = higher confidence
+            'score_range': [min(results), max(results)],
         }
     
     def identify_flaky_cases(self, 
@@ -948,9 +1009,10 @@ class FlakyEvalDetector:
         if 'ambiguous' in result.get('flags', []):
             return 'ambiguous_input'
         
-        # Check if evaluation criteria unclear
-        if result.get('evaluator_confidence', 1.0) < 0.7:
-            return 'unclear_criteria'
+        # Disagreement is observable; a judge's self-reported confidence is not
+        # a calibrated error probability.
+        if result.get('judge_disagreement_rate', 0.0) > 0.2:
+            return 'evaluator_instability'
         
         return 'unknown'
 ```
@@ -1180,17 +1242,22 @@ import requests
 class SlackNotifier:
     """Send eval notifications to Slack"""
     
-    def __init__(self, webhook_url: str):
+    def __init__(self, webhook_url: str, pass_threshold: float):
         self.webhook_url = webhook_url
+        self.pass_threshold = pass_threshold
     
     def notify_completion(self, results: dict, comparison: dict = None):
         """Notify on eval completion"""
         
         score = results['aggregated']['overall']['score']
-        passed = score >= 0.8
+        coverage = results['aggregated']['overall']['coverage']
+        must_pass = results['aggregated']['overall']['all_must_pass']
+        measured = score is not None and coverage == 1.0
+        passed = measured and must_pass and score >= self.pass_threshold
         
-        color = '#36a64f' if passed else '#ff0000'
-        status_emoji = '✅' if passed else '❌'
+        color = '#36a64f' if passed else ('#f2c744' if not measured else '#ff0000')
+        status_emoji = '✅' if passed else ('⚠️' if not measured else '❌')
+        score_text = f"{score:.3f}" if score is not None else "UNMEASURED"
         
         blocks = [
             {
@@ -1203,7 +1270,8 @@ class SlackNotifier:
             {
                 "type": "section",
                 "fields": [
-                    {"type": "mrkdwn", "text": f"*Overall Score:* {score:.3f}"},
+                    {"type": "mrkdwn", "text": f"*Overall Score:* {score_text}"},
+                    {"type": "mrkdwn", "text": f"*Coverage:* {coverage:.1%}"},
                     {"type": "mrkdwn", "text": f"*Samples:* {results['num_samples']}"},
                     {"type": "mrkdwn", "text": f"*Duration:* {results['duration_seconds']:.1f}s"},
                     {"type": "mrkdwn", "text": f"*Commit:* `{os.environ.get('GITHUB_SHA', 'unknown')[:7]}`"}
@@ -1374,11 +1442,10 @@ lo_c, hi_c = bootstrap_ci(curr)
 lo_b, hi_b = bootstrap_ci(base)
 print(f"baseline: [{lo_b:.3f}, {hi_b:.3f}]   current: [{lo_c:.3f}, {hi_c:.3f}]")
 
-# Fail only if the current UPPER bound is below the baseline LOWER bound
-# (i.e. we are statistically confident there's a regression).
-if hi_c < lo_b:
-    sys.exit(f"REGRESSION: current {hi_c:.3f} < baseline-low {lo_b:.3f}")
-print("No statistically-significant regression.")
+# This separate-interval sketch is conservative and discards the paired-case
+# design. In a production gate, join candidate and baseline rows by case ID,
+# bootstrap their per-case deltas, and fail only when the delta interval is
+# wholly below the tolerated regression margin.
 ```
 
 #### Example 3 — Two-tier CI: smoke on every push, full eval on merge to main
@@ -1419,7 +1486,7 @@ By 2026 a large and growing share of the diffs flowing through CI are written by
 
 1. **Flaws that pass unremarked.** An agent can produce code that compiles, passes the existing tests, and is subtly wrong. Anthropic's Opus 4.8 launch claims it is "around four times less likely than its predecessor to allow flaws in code it has written to pass unremarked" ([Opus 4.8 launch post](https://www.anthropic.com/news/claude-opus-4-8)) — i.e. labs now *measure this as a capability*, and so should your pipeline. Don't let "all tests green" stand in for "correct" when the tests themselves may have been written by the same agent.
 
-2. **Reward hacking / test gaming.** When an agent is optimized to make a check pass, it may satisfy the *checker* rather than the *intent* — hard-coding an expected output, weakening an assertion, `skip`-ing a failing test, or special-casing the grader's input. OpenAI found frontier reasoning models will literally think "Let's hack" in their chain-of-thought when an environment is gameable ([CoT monitoring](https://openai.com/index/chain-of-thought-monitoring/)); Anthropic showed this generalizes beyond the immediate task ([arXiv:2511.18397](https://arxiv.org/abs/2511.18397)).
+2. **Reward hacking / test gaming.** When an agent is optimized to make a check pass, it may satisfy the *checker* rather than the *intent* — hard-coding an expected output, weakening an assertion, `skip`-ing a failing test, or special-casing the grader's input. In controlled research where internal reasoning was available, OpenAI observed explicit plans such as "Let's hack" when an environment was gameable ([CoT monitoring](https://openai.com/index/chain-of-thought-monitoring/)); Anthropic showed reward-hacking behavior can generalize beyond the immediate task ([arXiv:2511.18397](https://arxiv.org/abs/2511.18397)). This does not mean ordinary CI users can retrieve a model's private reasoning.
 
 Practical CI hardening for AI-authored changes:
 
@@ -1435,8 +1502,9 @@ Practical CI hardening for AI-authored changes:
 │    after you inject a bug, the tests are theater.                     │
 │  • Add an LLM-judge "did this change do what the PR says?" review     │
 │    that reads the diff + PR description, independent of test results. │
-│  • Keep agent chain-of-thought / tool logs in the CI artifact so a    │
-│    human can audit *how* a green check was reached, not just that.    │
+│  • Keep visible reasoning summaries, tool logs, and outputs in the    │
+│    CI artifact so a human can audit observable actions. Do not        │
+│    require or retain private chain-of-thought.                        │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1471,6 +1539,3 @@ Create an automated release gate that:
 
 ## Next Module
 → [Module 8: Real-World Case Studies](../08-case-studies/README.md)
-
-
-

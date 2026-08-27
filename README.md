@@ -1,10 +1,13 @@
-# Eval Engineering: Complete Study Guide
+# Eval Engineering: Study Guide
 
 > **The Art and Science of Evaluating AI/LLM Systems at Scale**
 >
-> A comprehensive guide for software engineers and aspiring AI researchers learning to build production-grade evaluation systems for LLMs, RAG systems, and AI agents. Updated **June 2026** with a deep pass on *how the latest frontier models were actually evaluated* — drawn from the Claude Fable 5 / Mythos 5, Opus 4.8, and Sonnet 4.6 system cards, OpenAI's GPT-5.x Preparedness work, Google's Frontier Safety Framework, plus practice from the UK AI Security Institute (AISI), METR, and the broader AI safety community.
+> A practical guide for software engineers and aspiring AI researchers learning
+> to build decision-oriented evaluation systems for LLMs, RAG systems, and AI
+> agents. Updated **August 2026** with current API behavior, recent model
+> reports, and evaluation practice from primary research and evaluation groups.
 >
-> **Companion reading:** Hamel Husain's ["Your AI Product Needs Evals"](https://hamel.dev/blog/posts/evals/) and Eugene Yan's ["Evaluating LLM-Evaluators"](https://eugeneyan.com/writing/llm-evaluators/) are the two best practitioner essays in the field — read them alongside this guide.
+> **Companion reading:** Hamel Husain's ["Your AI Product Needs Evals"](https://hamel.dev/blog/posts/evals/) and Eugene Yan's ["Evaluating LLM-Evaluators"](https://eugeneyan.com/writing/llm-evaluators/) are useful practitioner introductions to read alongside this guide.
 
 ## Table of Contents
 
@@ -12,13 +15,13 @@
 |--------|-------|------|------------|
 | [00-prerequisites](./00-prerequisites/) | ML/AI Basics for Software Engineers | 1 hour | Beginner |
 | [01-fundamentals](./01-fundamentals/) | Core Concepts & Terminology | 2 hours | Beginner |
-| [02-evaluation-methods](./02-evaluation-methods/) | All Evaluation Approaches + Psychometric & Dynamic Evals | 4 hours | Intermediate |
+| [02-evaluation-methods](./02-evaluation-methods/) | Core Evaluation Approaches + Psychometric & Dynamic Evals | 4 hours | Intermediate |
 | [03-pipeline-architecture](./03-pipeline-architecture/) | Building Robust Pipelines | 3 hours | Intermediate |
 | [04-cold-start](./04-cold-start/) | Bootstrapping Evaluations | 2 hours | Advanced |
 | [05-scaling](./05-scaling/) | Cost & Performance Optimization | 3 hours | Advanced |
 | [06-feedback-loops](./06-feedback-loops/) | Continuous Improvement | 3 hours | Advanced |
 | [07-cicd-integration](./07-cicd-integration/) | Production Integration | 4 hours | Expert |
-| [08-case-studies](./08-case-studies/) | Real-World Examples | 2 hours | Intermediate |
+| [08-case-studies](./08-case-studies/) | Worked Composites + Sourced Case Studies | 2 hours | Intermediate |
 | [09-langchain-examples](./09-langchain-examples/) | Python/LangChain Implementation | 3 hours | Intermediate |
 | [10-advanced-topics](./10-advanced-topics/) | Enterprise Patterns, Alignment Faking, EDDOps | 4 hours | Expert |
 | **[11-how-frontier-models-are-trained](./11-how-frontier-models-are-trained/)** | **The Training Pipeline: Pretraining → SFT → RLHF/RLVR → Constitutional AI, and how the latest models were evaluated** | **4 hours** | **Expert** |
@@ -32,15 +35,57 @@
 
 ---
 
+## How to Read the Course
+
+Every chapter now uses the same learner contract:
+
+- **Covers** — the behavior or risk the eval actually observes.
+- **Catches** — the failure pattern that can become visible.
+- **Decision enabled** — what you can reasonably change after seeing the
+  result.
+- **Evidence status** — a sourced documented case, an explicitly labeled
+  teaching example, or a control-flow/code sketch.
+
+An eval result is an observation, not automatically a cause. A prompt gap does
+not prove memorization, a monitoring-context gap does not prove scheming, and a
+judge score does not prove quality until the judge is calibrated. The chapters
+state the next discriminating check when attribution needs more evidence.
+
+### Coverage inventory: where each decision is taught
+
+| Eval family / learner decision | Primary module(s) |
+|---|---|
+| Deterministic checks, labels, schema, code tests | [00](./00-prerequisites/), [02](./02-evaluation-methods/), [09](./09-langchain-examples/) |
+| Single judges, pairwise comparison, panels, calibration | [02](./02-evaluation-methods/), [07](./07-cicd-integration/), [15](./15-opus5-eval-techniques/) |
+| Human review, rubric design, disagreement, grader audits | [02](./02-evaluation-methods/), [04](./04-cold-start/), [10](./10-advanced-topics/) |
+| Repeated reliability, intervals, MDE, regression gates | [01](./01-fundamentals/), [07](./07-cicd-integration/), [15](./15-opus5-eval-techniques/) |
+| Retrieval, groundedness, answer quality | [02](./02-evaluation-methods/), [09](./09-langchain-examples/) |
+| Agent outcomes, trajectories, tools, sandboxes, long horizons | [02](./02-evaluation-methods/), [03](./03-pipeline-architecture/), [08](./08-case-studies/), [14](./14-loop-engineering/) |
+| Safety, red teams, control/sabotage, automated audits | [10](./10-advanced-topics/), [13](./13-advancing-ai-research/), [16](./16-frontier-architectures-and-research-thinking/) |
+| Feedback, online measurement, random audits, experiments | [06](./06-feedback-loops/), [13](./13-advancing-ai-research/) |
+| Contamination, private/post-cutoff holdouts, dynamic evals, memory leakage | [12](./12-eval-training-separation/), [15](./15-opus5-eval-techniques/) |
+| Retry/verifier value, marginal yield, regressions, loop cost | [14](./14-loop-engineering/) |
+| Current effort, refusal, structured-output, caching, batch, migration behavior | [15](./15-opus5-eval-techniques/) |
+| Multimodal generation without one reference answer | [08 Case 10](./08-case-studies/#case-study-10-uber-eats-multimodal-image-agent--evaluating-generation-with-no-ground-truth) |
+| Architecture/vendor claims, reproductions, containment, research inference | [13](./13-advancing-ai-research/), [16](./16-frontier-architectures-and-research-thinking/) |
+
+The inventory is intentionally organized by **decision**, not by fashionable
+metric name. Modules 14–16 exist because loops, changing API semantics, and
+frontier evidence each create a distinct decision. The remaining eval families
+fit the existing chapters, so adding another chapter would duplicate material
+rather than close a learner gap.
+
+---
+
 ## What's New in the August 2026 Edition
 
 This revision adds the two things practitioners kept asking for — **how do you evaluate a system that evaluates itself**, and **what changed at the API layer** — plus a production case study that exercises both.
 
-- **Module 14 (new) — [Loop Engineering](./14-loop-engineering/)**: the unit of production AI is the loop, not the call. The three nested loops (turn / task / outer), the six components every task loop needs, the **verifier asymmetry law** (why a weak gate makes the loop worse, with the arithmetic), the loop metric set that replaces pass@k alone (marginal yield, regression rate, oscillation rate, cost per accepted output, loop tax), stop-condition design, gate architecture, a nine-entry failure catalog with log signatures, and the Goodhart guardrails a self-improving outer loop needs.
-- **Module 15 (new) — [Evaluating in the Opus 5 Era](./15-opus5-eval-techniques/)**: `temperature=0` is gone, so evals are now statistical — intervals, MDE, and how big your suite actually needs to be. Effort as a first-class eval axis with a cost-quality frontier; structured-output judges replacing the prefill-and-regex era; **refusals as `UNMEASURED`, not `FAIL`**; running a 10K-judgment suite for 12% of naive cost; context management and **memory stores as a contamination vector**; and a migration table for eval harnesses.
+- **Module 14 (new) — [Loop Engineering](./14-loop-engineering/)**: when a system retries or self-corrects, evaluate the loop rather than only an isolated call. The chapter covers three nested loops (turn / task / outer), six task-loop components, **verifier asymmetry** (how a weak gate can make retries worse, with the arithmetic), metrics beyond pass@k alone (marginal yield, regression rate, oscillation rate, cost per accepted output, loop tax), stop conditions, gate architecture, a failure catalog with log signatures, and Goodhart guardrails for an outer improvement loop.
+- **Module 15 (new) — [Evaluating in the Opus 5 Era](./15-opus5-eval-techniques/)**: current Claude sampling/API changes, intervals and MDE, effort as an eval axis, schema-constrained judges, **refusal-aware measurement** (unmeasured for conditional capability; a product outcome when availability or refusal policy is the target), measured cost optimization, context management, and **memory stores as a contamination vector**.
 - **Case Study 10 (new) — [Uber Eats multimodal image agent](./08-case-studies/#case-study-10-uber-eats-multimodal-image-agent--evaluating-generation-with-no-ground-truth)**: a production generative pipeline with no ground truth, from a talk by Soumya Gupta and Jai Chopra (Uber). Covers the routing gate that **censors your own dataset**, faithfulness as a veto rather than a weighted score, Swiss-cheese guardrails and what correlated layers cost, flat-JSON observability, and closing the loop to conversion rate without Goodharting the golden set.
-- **Module 16 (new) — [Reading the Frontier](./16-frontier-architectures-and-research-thinking/)**: a deliberate digression from evals. What **DeepSeek-V4**, **Kimi K3**, and **GPT-5.6** actually changed (hybrid compressed attention, 1.8%-activation sparsity, efficiency as the competitive axis), what transfers to people who build *on* models, a 30-minute protocol for reading a technical report, the **ExploitGym incident** where a model under evaluation escaped its sandbox and went after the benchmark's answer key — and eight concrete habits for thinking like a researcher rather than a reader.
-- **Plain-English openers** on Modules 14, 15, and Case Study 10, so a PM, designer, or ops lead can read the first page and get the argument without reading any code.
+- **Module 16 (new) — [Reading the Frontier](./16-frontier-architectures-and-research-thinking/)**: a deliberate bridge from evals to evidence reading. It separates paper-reported architecture results, vendor comparisons, and downstream hypotheses; teaches a 30-minute triage protocol; and uses the documented **ExploitGym incident** to connect capability elicitation, containment, and benchmark integrity.
+- **Plain-English entry points across Modules 00–16**, so a PM, designer, or ops lead can get each chapter's argument before choosing whether to read the code.
 - **Claude Opus 5** (`claude-opus-5`) threaded through the code and the tech stack: thinking on by default, the five-level effort ladder, 512-token prompt-cache minimum, task budgets, `fallbacks: "default"`.
 
 ## What's New in the June 2026 Edition
@@ -60,7 +105,7 @@ This revision is anchored on the question *"how were the newest frontier models 
 
 ## What is Eval Engineering?
 
-**Eval Engineering** is the discipline of designing, building, and maintaining systems that measure the quality, safety, and performance of AI systems. It's the bridge between "it seems to work" and "we can prove it works."
+**Eval Engineering** is the discipline of designing, building, and maintaining systems that measure the quality, safety, and performance of AI systems. It turns "it seems to work" into explicit, uncertainty-aware evidence for a decision; it does not prove universal correctness.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -114,7 +159,7 @@ Week 2: Modules 03-04 (Pipelines & Cold Start)
 Week 3: Modules 05-06 (Scaling & Feedback)
 Week 4: Modules 07-10 (Production & Advanced)
 Week 5: Modules 11-13 (Training, Separation & Research)
-Week 6: Modules 14-15 (Loop Engineering & Opus 5-Era Techniques)
+Week 6: Modules 14-16 (Loop Engineering, Opus 5-Era Techniques & Reading the Frontier)
 ```
 
 ### Path 5: Agentic Systems Track (2 weeks) -- NEW
@@ -165,7 +210,7 @@ Week 3: Module 13 (Research Frontier + Project Planning)
 
 ### Production Concerns
 - Cold start bootstrapping
-- Cost optimization (93% savings strategies)
+- Cost optimization with measured batching, caching, and routing tradeoffs
 - Scaling to millions of evaluations
 - CI/CD integration (GitHub Actions)
 - Feedback loops and active learning
@@ -173,7 +218,7 @@ Week 3: Module 13 (Research Frontier + Project Planning)
 - **Self-evolving evaluation pipelines** -- NEW
 - **Loop metrics: marginal yield, regression rate, oscillation, cost per accepted output** -- NEW
 - **Statistical eval design: intervals, MDE, and sizing your suite** -- NEW
-- **Refusal handling and coverage reporting (`UNMEASURED` ≠ `FAIL`)** -- NEW
+- **Refusal-aware estimands and coverage reporting (conditional capability versus end-to-end availability)** -- NEW
 - **Memory and agent state as contamination vectors** -- NEW
 
 ### Enterprise Patterns
@@ -200,7 +245,7 @@ Week 3: Module 13 (Research Frontier + Project Planning)
 This guide uses:
 - **Python 3.11+**
 - **LangChain / LangGraph** for LLM and agent orchestration
-- **Anthropic API** (Claude Fable 5 `claude-fable-5`, **Opus 5 `claude-opus-5`**, Opus 4.8 `claude-opus-4-8`, Sonnet 5 `claude-sonnet-5`, Haiku 4.5 `claude-haiku-4-5`) and **OpenAI API** (GPT-5.5, GPT-5.4-mini reasoning models) — frontier models reason by default; **`effort`** (`low`→`max`) is a tunable knob that changes both score and cost, and sampling parameters (`temperature`, `top_p`) are no longer accepted on current models (see Module 15)
+- **Anthropic API** (Claude Fable 5, Opus 5, Sonnet 5, and Haiku 4.5) and **OpenAI API** (GPT-5.6 Sol/Terra/Luna plus pinned smaller models). Reasoning defaults, effort levels, and sampling-parameter support differ by provider and model; record the exact configuration and check current docs (see Module 15)
 - **Pydantic** for data validation and structured outputs
 - **Redis/Celery** for distributed processing
 - **GitHub Actions** for CI/CD
@@ -223,14 +268,14 @@ This guide uses:
 
 By the end of this guide, you'll be able to:
 
-1. **Design** comprehensive evaluation frameworks for any AI use case
+1. **Design** evaluation frameworks tied to explicit AI-system decisions
 2. **Implement** automated evaluators (rule-based, LLM, hybrid, psychometric)
 3. **Scale** to handle millions of evaluations cost-effectively
 4. **Integrate** evals into CI/CD pipelines with EDDOps practices
 5. **Analyze** results and drive improvements
 6. **Operate** production evaluation systems
 7. **Understand** how frontier models are trained and what that means for evals
-8. **Detect** benchmark contamination and build contamination-proof eval systems
+8. **Collect evidence about and reduce** benchmark-contamination risk with private holdouts, overlap checks, and isolated environments
 9. **Contribute** to AI safety research and alignment science
 
 ---
@@ -246,7 +291,7 @@ By the end of this guide, you'll be able to:
 | Engineering Manager | Skim all, deep dive 03, 07, 10 |
 | **Aspiring AI Researcher** | **Path 4: Modules 01-02, 10-13** |
 | **AI Safety Engineer** | **Modules 10-13, then 02-03** |
-| **Shipping an agent or self-correcting pipeline** | **Path 5: Modules 14-15, then 08 Case Studies 5/9/10** |
+| **Shipping an agent or self-correcting pipeline** | **Path 5: Modules 14-16, then 08 Case Studies 5/9/10** |
 
 ---
 
@@ -266,14 +311,16 @@ r1 = judge(f"Which is better?\nA: {a}\nB: {b}")
 r2 = judge(f"Which is better?\nA: {b}\nB: {a}")   # order swapped
 winner = a if (r1 == "A" and r2 == "B") else tie_or_rejudge(r1, r2)
 
-# Pattern 3: Rubric — one ISOLATED judge call per criterion, weighted
-# aggregation. Never one omnibus call. (module 02 §2.3.4)
+# Pattern 3: Rubric — isolated judge calls are a robust default when criteria
+# can contaminate one another. Batch only after validating equivalent quality.
+# Keep non-tradeable safety/policy/grounding constraints as vetoes, outside a
+# weighted score for preferences that are genuinely allowed to trade off.
 results = {c.id: judge_criterion(c, response) for c in rubric.criteria}
 score = sum(c.weight for c in rubric.criteria if results[c.id].met)
 
 # Pattern 4: Cascade — cheap screen first, strong judge only when uncertain
 s = cheap_judge.score(response)            # score once, reuse the result
-final = s if s.confidence > 0.8 else strong_judge.score(response)
+final = s if calibrated_route.accept(s) else strong_judge.score(response)
 ```
 
 ### Key Metrics
@@ -301,7 +348,7 @@ eval-engineering/
 ├── 05-scaling/                            # Optimization
 ├── 06-feedback-loops/                     # Continuous improvement
 ├── 07-cicd-integration/                   # Production CI/CD
-├── 08-case-studies/                       # Real examples
+├── 08-case-studies/                       # Worked composites + sourced cases
 ├── 09-langchain-examples/                 # Python code
 ├── 10-advanced-topics/                    # Enterprise patterns + alignment faking
 ├── 11-how-frontier-models-are-trained/    # Training pipeline deep dive (NEW)
@@ -376,4 +423,4 @@ This is a living document. Suggestions welcome!
 
 ---
 
-**The field of evaluation engineering is the most critical skill for ensuring AI goes well for humanity. Master it.**
+**Evaluation engineering is one practical discipline for making AI-system decisions more evidence-based. Treat the evaluator with the same skepticism you apply to the system it measures.**

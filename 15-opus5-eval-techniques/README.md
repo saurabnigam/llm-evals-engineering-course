@@ -2,7 +2,7 @@
 
 > **The eval harness you wrote in 2024 does not run in 2026, and the parts that still run are measuring something subtly different.**
 >
-> `temperature=0` is rejected. Extended thinking with a fixed `budget_tokens` is rejected. Assistant prefill — the trick half the world used to force JSON out of a judge — is rejected. Thinking is on by default, so a "cheap" eval config silently got more expensive and more capable. Meanwhile the harness can now cost a tenth of what it used to, and the judge can be forced to return a schema-valid object with no parsing at all.
+> On the current Claude models covered here, `temperature=0` is rejected. Extended thinking with a fixed `budget_tokens` and assistant prefill are also rejected. Thinking defaults changed, so an old eval config may measure a different and more expensive system. Prompt caching and batches can materially reduce cost, while structured outputs can enforce response shape.
 >
 > This module is the API-layer half of eval engineering: what changed, what breaks, and what is now possible.
 >
@@ -18,11 +18,31 @@ An **eval harness** is the test suite for an AI feature: a set of saved examples
 
 The practical consequence is uncomfortable and worth internalizing: **a 100-example test suite genuinely cannot tell 87% apart from 79%.** If your team argues about whether a four-point movement is real, the answer is usually "there is no way to know" — the suite is too small. Detecting a five-point change reliably takes roughly 900 examples.
 
-**2. The model has a "how hard should I think" dial.** It runs from low to max, and it changes both quality and cost — often dramatically, and not proportionally. In a typical measurement, the first twelve points of quality cost about 32¢ each and the last one costs $41.75. So "which setting should we use" is an arithmetic question with a defensible answer, and any quality claim that doesn't say which setting was used is not checkable.
+**2. The model has a "how hard should I think" dial.** It runs from low to max, and it changes both quality and cost—often dramatically and not proportionally. In the illustrative frontier later in this module, the first twelve points cost about 32¢ each and the last increment costs $41.75. Your frontier will differ, so the setting is an empirical product decision; any quality claim that omits it is incomplete.
 
-**3. Sometimes the model declines to answer, and that is not a failing grade.** Safety systems occasionally refuse a request. If the test harness records those as failures, the scores drop in exactly the topic areas the refusals cluster in — so you conclude the model is bad at something it was simply never allowed to attempt. The correct handling is a third category — **unmeasured** — reported alongside a *coverage* figure: "91% pass, on 99.8% of cases measured" is evidence; "91% pass, 71% measured" is not.
+**3. A refusal must be classified according to the question your eval asks.** If
+you are estimating task capability *conditional on an attempted answer*, a
+safeguard refusal is **unmeasured** and reduces coverage. If the product must
+answer, or the eval is testing correct refusal behavior, that same response is a
+measured failure or success. Silently treating every refusal as an ordinary
+wrong answer—or silently dropping it—changes the claim.
 
-The rest of the module is how to implement all of this, plus how to run a large test suite for roughly a tenth of the obvious cost. **Terms you'll meet:** *judge* — a model scoring another model's output. *effort* — the think-harder dial. *coverage* — the share of test cases that produced a real result. *contamination* — when the system under test has somehow seen the answers.
+The rest of the module shows how to implement this and how to measure potential savings rather than assume them. **Terms you'll meet:** *judge* — a model scoring another model's output. *effort* — the think-harder dial. *coverage* — the share of test cases that produced a real result. *contamination* — when the system under test has somehow seen the answers.
+
+Primary references for the changing API claims: [Claude model overview](https://platform.claude.com/docs/en/about-claude/models/overview), [migration guide](https://platform.claude.com/docs/en/about-claude/models/migration-guide), [effort](https://platform.claude.com/docs/en/build-with-claude/effort), [prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching), and [pricing](https://platform.claude.com/docs/en/about-claude/pricing).
+
+### Opus-era harness checks: what they cover, catch, and enable
+
+| Eval or harness check | What it covers | What it catches | Decision it enables |
+|---|---|---|---|
+| Repeated trials plus interval | Outcome variability under a pinned configuration | A headline movement that is compatible with sampling noise | Increase sample size, widen the gate, or investigate a real effect |
+| Effort sweep | Quality, latency, tokens, and tool turns at each effort level | Paying more for no material gain—or underthinking hard cases | Choose effort by measured value, not model prestige |
+| Refusal/coverage accounting | Which cases produced a score and why | Selective missingness hidden inside a pass rate | Report conditional capability separately from product availability |
+| Structured judge output | Whether a judge returned the required fields and evidence | Regex/parser failures and missing verdicts | Mark malformed results unmeasured and repair the judge contract |
+| Position-flipped, diverse panel | Judge bias across order, lens, and model family | Position bias and correlated blind spots | Keep only panel members that add calibrated coverage |
+| Cache telemetry and batch reconciliation | Whether promised cost optimizations actually occurred | Silent cache misses and results joined in the wrong order | Fix the harness before trusting cost or score comparisons |
+| Context/memory A/B | The exact long-horizon system configuration | Gains caused by compaction, hidden warm state, or answer carryover | Report configurations separately and isolate trials |
+| Migration smoke suite | Request validity, truncation, stop reasons, and served model | API changes that look like capability regressions | Repair the harness before comparing model versions |
 
 ---
 
@@ -33,7 +53,7 @@ The rest of the module is how to implement all of this, plus how to run a large 
 | Claude Fable 5 | `claude-fable-5` | 1M | 128K | $10 / $50 | Ceiling-setting: hardest reference judgments, adversarial verification |
 | **Claude Opus 5** | **`claude-opus-5`** | **1M** | **128K** | **$5 / $25** | **Default judge and arbiter; agent-under-test for hard tasks** |
 | Claude Opus 4.8 | `claude-opus-4-8` | 1M | 128K | $5 / $25 | Fallback target on refusals; A/B baseline |
-| Claude Sonnet 5 | `claude-sonnet-5` | 1M | 128K | $3 / $15 | High-volume judging where κ against humans holds up |
+| Claude Sonnet 5 | `claude-sonnet-5` | 1M | 128K | $2 / $10 | High-volume judging where κ against humans holds up |
 | Claude Haiku 4.5 | `claude-haiku-4-5` | 200K | 64K | $1 / $5 | First-stage screen in a cascade; deterministic-ish rule checks |
 
 Facts that change harness design, not just the model string:
@@ -47,11 +67,14 @@ Facts that change harness design, not just the model string:
 
 ---
 
-## 15.2 The Death of `temperature=0`: Evals Are Now Statistical
+## 15.2 Why One Run Is Not Evidence
 
 For years, the first line of every eval harness was `temperature=0`, and the second was a comment claiming this made runs reproducible. Both are now gone: **`temperature`, `top_p`, and `top_k` are rejected with a 400** on Opus 5, Opus 4.8/4.7, Fable 5, and (for non-default values) Sonnet 5.
 
-This is less of a loss than it looks, because `temperature=0` never actually guaranteed identical outputs — it reduced variance without eliminating it, and a generation of eval engineers built false confidence on that. What it did do was let you get away with **n=1**. That era is over, and the correct response is to make eval variance explicit rather than to pretend it away.
+This is less of a loss than it looks, because `temperature=0` never guaranteed
+identical outputs; it reduced variance without eliminating it. It did not make
+**n=1** statistically valid—it merely made repeated differences easier to
+overlook. The correct response is to measure run-to-run variation explicitly.
 
 ```python
 # pip install anthropic scipy
@@ -90,7 +113,12 @@ print(EvalRun(successes=87, n=100))    # 87.0% (95% CI 78.8%–92.9%, n=100)
 print(EvalRun(successes=870, n=1000))  # 87.0% (95% CI 84.8%–89.0%, n=1000)
 ```
 
-Look at the first line before shipping any regression gate. **A 100-case eval suite cannot distinguish 87% from 79%.** Every team that has ever argued about whether a 4-point movement on a 150-case suite is a real regression has been arguing about noise. The interval is what tells you when to stop arguing.
+Look at the first line before shipping any regression gate. Its one-sample 95%
+interval still includes roughly 79%, so the point estimate alone does not
+establish an eight-point difference. A paired baseline/candidate comparison can
+have different power because it uses per-case differences; calculate that
+design rather than comparing two rounded pass rates. The interval and minimum
+detectable effect tell you which movements the suite can support.
 
 ### How many cases do you actually need?
 
@@ -142,6 +170,7 @@ client = anthropic.Anthropic()
 
 def run_suite(cases, effort: str, model: str = "claude-opus-5") -> dict:
     passed = cost = 0.0
+    measured = unmeasured = 0
     t0 = time.monotonic()
     for case in cases:
         r = client.messages.create(
@@ -150,11 +179,17 @@ def run_suite(cases, effort: str, model: str = "claude-opus-5") -> dict:
             messages=[{"role": "user", "content": case["prompt"]}],
         )
         if r.stop_reason == "refusal":                  # never silently score a refusal
+            unmeasured += 1
             continue
         text = next((b.text for b in r.content if b.type == "text"), "")
         passed += case["check"](text)
+        measured += 1
         cost += r.usage.input_tokens * 5e-6 + r.usage.output_tokens * 25e-6
-    return {"effort": effort, "pass_rate": passed / len(cases), "cost_usd": cost,
+    return {"effort": effort,
+            "pass_rate": passed / measured if measured else None,
+            "measured": measured, "unmeasured": unmeasured,
+            "coverage": measured / len(cases) if cases else 0.0,
+            "cost_usd": cost,
             "wall_clock_s": time.monotonic() - t0}
 
 frontier = [run_suite(CASES, e) for e in ("low", "medium", "high", "xhigh", "max")]
@@ -175,7 +210,7 @@ Three readings, all of which people get wrong by default:
 
 - **The last column is the decision.** Points 71→83 cost 32¢ each; the point from `xhigh` to `max` costs $41.75. Nothing about "we use max effort because quality matters" survives contact with that column.
 - **Sweep down, not up.** On Opus 5, `low` and `medium` are unusually strong — often matching a previous generation's top settings. Prior-generation effort defaults rarely transfer; re-tune them rather than carrying them over.
-- **Start at `xhigh` for coding and agentic work**, `high` elsewhere, then sweep. On long-horizon agentic tasks, higher effort up front frequently *reduces* total cost by cutting turn count — so the frontier for an agent must be measured on end-to-end cost, not per-call cost.
+- **Choose a starting point, then sweep.** `xhigh` is a defensible capability-first starting point for hard coding/agentic work and `high` for many other tasks, but neither is a universal optimum. Higher effort can reduce total turn count or merely add cost; measure end-to-end task cost, latency, coverage, and success.
 
 ### The thinking-disabled trap for eval harnesses
 
@@ -190,21 +225,24 @@ Mitigation, in priority order: **turn thinking back on and lower `effort` instea
 
 ---
 
-## 15.4 Judges: Structured Outputs, and the Refusal That Must Not Count as a Failure
+## 15.4 Judges: Structured Outputs and Refusal-Aware Measurement
 
-### Structured outputs replace the prefill-and-regex era
+### Structured outputs replace prefill-and-regex parsing
 
-Assistant prefill returns a 400 on Opus 5, Opus 4.8/4.7/4.6, Sonnet 5/4.6, and Fable 5. Every judge built on `{"role": "assistant", "content": "{"}` plus a regex extractor plus a retry-on-`JSONDecodeError` loop is dead — and its replacement is strictly better, because the schema is *enforced* rather than hoped for:
+Assistant prefill returns a 400 on Opus 5, Opus 4.8/4.7/4.6, Sonnet 5/4.6,
+and Fable 5. A judge that depended on
+`{"role": "assistant", "content": "{"}` must therefore migrate. Structured
+outputs enforce the response shape, although they do not prove that the rubric
+or verdict is correct:
 
 ```python
 VERDICT_SCHEMA = {
     "type": "object",
     "properties": {
-        "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+        "verdict": {"type": "string", "enum": ["PASS", "FAIL", "UNKNOWN"]},
         "evidence": {"type": "string", "description": "Quote from the response you relied on."},
-        "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
     },
-    "required": ["verdict", "evidence", "confidence"],
+    "required": ["verdict", "evidence"],
     "additionalProperties": False,
 }
 
@@ -216,9 +254,20 @@ resp = client.messages.create(
 )
 ```
 
-Delete the whole scaffold that used to surround this: stop sequences guarding JSON, `json.loads` inside a retry loop, "output ONLY valid JSON" in the system prompt, and the parse-failure counter on your dashboard. Two notes: the first request with a new schema pays a one-time compilation cost (cached 24h afterward), and structured outputs are **incompatible with citations** (400).
+You can remove stop sequences guarding JSON, the regex extractor, and
+"output ONLY valid JSON" prompting. Keep telemetry for refusals, truncation,
+transport failures, `UNKNOWN` verdicts, and schema/API errors: valid JSON is
+not the same as a measured judgment. Two API notes: the first request with a
+new schema pays a one-time compilation cost (cached for 24 hours), and
+structured outputs are **incompatible with citations** (400).
 
-### Refusals: a missing measurement, not a negative result
+### Refusals: classify them from the estimand
+
+For a capability eval conditional on the target model actually answering, a
+safeguard refusal is missing measurement. For an end-to-end product eval where
+availability matters, it is a product outcome. For a refusal-policy eval, it
+may be the correct answer. Decide this before running the suite and report both
+the conditional score and refusal rate when they answer different questions.
 
 This is the eval-integrity issue of the Opus 5 era, and it is easy to get silently wrong.
 
@@ -253,17 +302,31 @@ def judge(prompt: str) -> tuple[Outcome, dict]:
 
 
 def report(outcomes: list[Outcome]) -> str:
+    if not outcomes:
+        return "UNMEASURED (0 cases, coverage 0.0%)"
     measured = [o for o in outcomes if o is not Outcome.UNMEASURED]
     unmeasured = len(outcomes) - len(measured)
-    rate = sum(o is Outcome.PASS for o in measured) / len(measured) if measured else 0.0
+    rate = (
+        sum(o is Outcome.PASS for o in measured) / len(measured)
+        if measured else None
+    )
     coverage = len(measured) / len(outcomes)
-    return (f"pass {rate:.1%} on {len(measured)} measured cases "
+    rate_text = f"{rate:.1%}" if rate is not None else "UNMEASURED"
+    return (f"pass {rate_text} on {len(measured)} measured cases "
             f"({unmeasured} unmeasured, coverage {coverage:.1%})")
 ```
 
-**Always report coverage next to the score.** "91.4% pass, coverage 99.8%" and "91.4% pass, coverage 71%" are entirely different claims, and only one of them is evidence.
+**Always report coverage and refusal rate next to a conditional score.**
+"91.4% pass, coverage 99.8%" and "91.4% pass, coverage 71%" are different
+claims. The second can still be evidence about attempted cases, but it is weak
+evidence about end-to-end product behavior and invites a missingness audit.
 
-`fallbacks: "default"` (beta header `server-side-fallback-2026-07-01`) routes declined requests to a recommended fallback by refusal category — cyber-category refusals go to Opus 4.8 — which recovers most of the coverage automatically. Prefer it to pinning a specific fallback model: pinning creates a migration you will owe later. Note it is Claude API only, and rejected on the Batches API — so a batched eval suite still needs the `UNMEASURED` state.
+`fallbacks: "default"` (beta header `server-side-fallback-2026-07-01`) can
+route declined requests to a recommended fallback by refusal category. That
+may recover product coverage, but it changes the system under test: record
+`response.model` and report primary-model and routed-system results separately.
+The option is Claude API only and rejected on the Batches API, so a batched eval
+suite still needs an explicit refusal outcome.
 
 ### Panels: diversity beats redundancy
 
@@ -309,11 +372,20 @@ That assertion belongs in your harness permanently. The classic invalidators are
 
 **2. Batch API.** Offline eval suites are the ideal batch workload: latency-insensitive, embarrassingly parallel, 50% off. Results arrive in **any order** — key by `custom_id`, never by position.
 
-**3. Cascade.** Screen with Haiku 4.5, escalate only the uncertain middle to Opus 5. The escalation rate is a tunable you should measure, not guess: run both models on a labeled sample, find the confidence threshold where Haiku's disagreement with Opus 5 becomes material, and set the escalation band there.
+**3. Cascade.** Screen with Haiku 4.5, then escalate the unresolved region to
+Opus 5. Learn the acceptance and escalation boundaries on held-out human
+labels; disagreement with the stronger judge is a diagnostic, not ground
+truth. Report each tier's error and coverage by slice.
 
-**4. Effort.** Often the largest single lever and the one nobody tries — a judge running at `medium` instead of `high` on straightforward criteria is a 40%+ cost cut with, frequently, no measurable κ change. Verify per criterion; do not assume.
+**4. Effort.** Lower effort can materially reduce cost on straightforward
+criteria, but the saving and validity change depend on output length and task.
+Measure cost, coverage, and agreement with humans per criterion rather than
+assuming a fixed percentage reduction.
 
-> **Count tokens with `client.messages.count_tokens`, never `tiktoken`.** It is OpenAI's tokenizer; it undercounts Claude tokens by 15–20% on prose and far more on code. Every cost model built on it is wrong in the same direction.
+> **Count Claude tokens with `client.messages.count_tokens`, not a tokenizer
+> built for another model family.** Token boundaries differ, so a foreign
+> tokenizer can bias cost and truncation estimates. Validate estimates against
+> the usage fields returned by the API.
 
 ---
 
@@ -437,13 +509,21 @@ Take your current eval suite's pass rate. Compute its 95% interval and its MDE a
 Run your suite at all five effort levels. Produce the cost-per-additional-point column. Identify the level where marginal cost per point exceeds what a point is worth to your product, and change your default to it.
 
 ### Exercise 3: Find your unmeasured cases
-Add the `UNMEASURED` outcome to your harness and re-run. Report coverage next to every pass rate. If coverage is below 99%, find out which categories the holes are in — that distribution is usually more interesting than the score.
+Add the `UNMEASURED` outcome to your harness and re-run. Report coverage next
+to every pass rate. Compare it with a predeclared minimum based on risk and
+failure cost—99% may be appropriate for some high-stakes suites but is not a
+universal threshold. Regardless of the aggregate, inspect which categories the
+holes occupy; that distribution is often more informative than the score.
 
 ### Exercise 4: Hunt the cache invalidator
 Assert `cache_read_input_tokens > 0` in your harness and run it. If it fails, bisect the prompt-building path for the invalidator. Compute the annualized cost of the bug you find.
 
 ### Exercise 5: Measure your memory contamination
-Run an agent eval twice: once with a fresh memory store per trial, once with a shared store across trials. Report both pass rates. The delta is either a contamination bug or a genuine learning capability — and deciding which is the real exercise.
+Run an agent eval twice: once with a fresh memory store per trial, once with a
+shared store across trials. Report both pass rates and inspect the stored
+content. The delta is an observation consistent with several explanations:
+answer leakage, intended cross-session learning, order effects, or a state-reset
+bug. Design the next probe to distinguish them.
 
 ---
 

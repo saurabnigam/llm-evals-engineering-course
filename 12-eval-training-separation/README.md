@@ -1,12 +1,36 @@
 # Module 12: Eval-Training Separation & Benchmark Integrity
 
-> **The Most Critical Problem in AI Evaluation That Most People Ignore**
+> **A Core Threat to Benchmark Validity**
 >
-> If your evaluation data leaked into training, your benchmarks are meaningless. This module covers the science of keeping evals honest -- from data contamination to dynamic benchmarks to the techniques Anthropic uses to maintain eval integrity across Claude model generations.
+> If evaluation data leaks into training, benchmark scores can overstate generalization. This module covers practical ways to reduce, detect, and disclose that risk -- from data decontamination to dynamic benchmarks and controls described in public model reports.
 
 ---
 
-## 12.1 Why Eval-Training Separation Is Existential
+## In Plain English
+
+A benchmark score is useful only if the system had to solve the task during the
+test. If the model saw the answer during training, fetched it through a tool, or
+inherited it from an agent's memory, the same score can describe a very
+different capability. This chapter teaches you to separate those failure
+channels instead of calling every suspicious result "contamination."
+
+### What each integrity check covers, catches, and enables
+
+| Check | What it covers | What it can catch | Decision it enables |
+|---|---|---|---|
+| Corpus overlap and provenance review | Whether eval items, labels, or close variants appear in accessible training corpora | Direct copies, near-duplicates, answer-key leakage | Remove or quarantine affected items; disclose residual risk |
+| Prefix-completion probe | Whether canonical item wording is reproduced unusually exactly | Memorized phrasing or benchmark-template familiarity | Investigate with corpus evidence or a private replacement; **not** declare contamination from this probe alone |
+| Original-versus-validated-variant comparison | Sensitivity to wording or surface form while preserving the tested skill | Prompt brittleness and, when combined with other evidence, possible memorization | Report both results and run a private/temporal holdout before making a capability claim |
+| Private or post-cutoff holdout | Performance on items the developer was unlikely to have trained against | Public-set overfitting and benchmark-specific scaffolding | Prefer the holdout estimate for release or procurement decisions |
+| Network, tool, cache, and memory audit | What the system can acquire *during* the run | Answer retrieval, warm-memory leakage, hidden test access | Fix environment isolation or report a warm-state result separately |
+| Dynamic or interactive task generation | Fresh tasks or environments rather than a fixed answer list | Exact-item reuse and some static-benchmark gaming | Extend benchmark life, after validating generated tasks and graders |
+| Canary/access audit | Unauthorized exposure of private items or graders | Pipeline leakage and unexpected readers | Rotate compromised assets and repair access controls |
+
+No single row proves that a benchmark is clean. The useful output is an
+evidence bundle: item provenance, overlap findings, environment configuration,
+holdout results, and uncertainty about what remains unobserved.
+
+## 12.1 Why Eval-Training Separation Matters
 
 ```
 THE FUNDAMENTAL PROBLEM
@@ -31,8 +55,8 @@ THE FUNDAMENTAL PROBLEM
 │              │  seen the test!  │                                            │
 │              └──────────────────┘                                            │
 │                                                                              │
-│  Result: High benchmark scores that DON'T reflect real capability.          │
-│  The model "memorized the test" rather than learned the skill.              │
+│  Risk: benchmark scores can mix task capability with item exposure,         │
+│  making generalization harder to estimate.                                  │
 │                                                                              │
 │  ANALOGY: A student who got the answer key before the exam.                 │
 │  They score 100%, but learned nothing.                                       │
@@ -297,28 +321,28 @@ contamination risk at four granular levels:
 │  Level 1: SEMANTIC CONTAMINATION                                 │
 │  "Is the meaning of the eval question present in training?"     │
 │  Method: Embedding similarity between eval items and training    │
-│  Threshold: cosine_similarity > 0.85                            │
+│  Signal: calibrated semantic-similarity score                   │
 ├─────────────────────────────────────────────────────────────────┤
 │  Level 2: INFORMATIONAL CONTAMINATION                            │
 │  "Does training data contain information that directly answers?" │
 │  Method: Information extraction + overlap analysis               │
-│  Threshold: key_info_overlap > 0.7                              │
+│  Signal: calibrated key-information overlap                     │
 ├─────────────────────────────────────────────────────────────────┤
 │  Level 3: DATA CONTAMINATION                                     │
 │  "Are eval data points (questions) in the training set?"        │
 │  Method: N-gram matching, fuzzy deduplication                   │
-│  Threshold: n_gram_overlap(n=10) > 0.5                          │
+│  Signal: n-gram/fuzzy overlap calibrated to the corpus          │
 ├─────────────────────────────────────────────────────────────────┤
 │  Level 4: LABEL CONTAMINATION                                    │
 │  "Are the eval ANSWERS in the training set?"                    │
 │  Method: Answer extraction + matching                           │
-│  Threshold: exact_answer_match > 0.3                            │
+│  Signal: answer/label overlap                                   │
 └─────────────────────────────────────────────────────────────────┘
 
-Output: Unified DCR Factor that adjusts raw accuracy to reflect 
-contamination-aware performance.
-
-Adjusted_Score = Raw_Score * (1 - DCR_Factor)
+Output: the paper combines contamination signals with fuzzy membership
+functions into a DCR adjustment. It does not prescribe the detector-specific
+hard thresholds shown in earlier versions of this course, and the adjusted
+score is a diagnostic—not the unknowable true uncontaminated performance.
 ```
 
 ### What 2025-2026 Contamination Studies Actually Found
@@ -344,27 +368,29 @@ Contamination detection for your evaluation datasets.
 Use this BEFORE trusting any benchmark result.
 """
 
-import numpy as np
-from typing import List, Dict, Tuple
-from collections import Counter
+from typing import List, Dict
 
 class ContaminationDetector:
     """
-    Detect potential data contamination between eval sets and model training.
-    Since we can't access training data directly, we use indirect signals.
+    Collect indirect contamination signals when the training corpus is hidden.
+
+    These observations are triage evidence, not a calibrated probability of
+    contamination. Exact correctness or benchmark recognition can occur
+    without leakage.
     """
     
     def __init__(self, model, embedding_model=None):
         self.model = model
         self.embedding_model = embedding_model
     
-    def detect_memorization(self, 
-                           eval_items: List[Dict],
-                           num_probes: int = 5) -> Dict:
+    def detect_memorization(self, eval_items: List[Dict]) -> Dict:
         """
-        Test if model has memorized eval items by checking if it can
-        complete partial questions or predict exact answer formats.
+        Record canonical-suffix reproduction, correctness, and source naming.
+        Corroborate suspicious rows before making a contamination claim.
         """
+        if not eval_items:
+            raise ValueError("eval_items must not be empty")
+
         results = []
         
         for item in eval_items:
@@ -375,17 +401,16 @@ class ContaminationDetector:
             truncated = question[:len(question)//2]
             completion = self.model.generate(
                 f"Complete this question: {truncated}",
-                temperature=0.0,
                 max_tokens=200
             )
             completion_overlap = self._text_similarity(
                 completion, question[len(question)//2:]
             )
             
-            # Probe 2: Does model give suspiciously exact answers?
+            # Probe 2: Record capability on the item. Correctness alone is not
+            # contamination evidence.
             answer = self.model.generate(
                 question,
-                temperature=0.0,
                 max_tokens=100
             )
             answer_exact_match = self._normalize(answer) == self._normalize(expected)
@@ -393,59 +418,41 @@ class ContaminationDetector:
             # Probe 3: Does model know the benchmark source?
             source_probe = self.model.generate(
                 f"Is this question from a well-known benchmark? "
-                f"If so, which one? Question: {question}",
-                temperature=0.0
+                f"If so, which one? Question: {question}"
             )
-            knows_source = any(
+            source_named = any(
                 bench in source_probe.lower() 
                 for bench in ["mmlu", "hellaswag", "humaneval", "gsm8k", "arc"]
             )
-            
-            # Probe 4: Confidence calibration
-            # Contaminated items often have abnormally high confidence
-            logprobs = self.model.generate_with_logprobs(question)
-            avg_confidence = np.mean([lp for lp in logprobs if lp is not None])
-            
+
             results.append({
                 "question_id": item.get("id", "unknown"),
-                "completion_overlap": completion_overlap,
-                "exact_match": answer_exact_match,
-                "knows_source": knows_source,
-                "avg_confidence": avg_confidence,
-                "contamination_risk": self._compute_risk(
-                    completion_overlap, answer_exact_match, 
-                    knows_source, avg_confidence
-                )
+                "canonical_suffix_overlap": completion_overlap,
+                "answer_exact_match": answer_exact_match,
+                "benchmark_source_named": source_named,
             })
-        
-        # Aggregate
-        high_risk = sum(1 for r in results if r["contamination_risk"] > 0.7)
-        
+
+        n = len(results)
         return {
-            "total_items": len(results),
-            "high_risk_items": high_risk,
-            "contamination_rate": high_risk / len(results),
-            "recommendation": self._recommend(high_risk / len(results)),
-            "details": results
+            "total_items": n,
+            "observable_summary": {
+                "mean_canonical_suffix_overlap": sum(
+                    row["canonical_suffix_overlap"] for row in results
+                ) / n,
+                "benchmark_source_named_rate": sum(
+                    row["benchmark_source_named"] for row in results
+                ) / n,
+                "answer_exact_match_rate": sum(
+                    row["answer_exact_match"] for row in results
+                ) / n,
+            },
+            "details": results,
+            "interpretation": (
+                "These are indirect signals. Any suspicious pattern requires "
+                "corroboration from corpus provenance, controlled variants, "
+                "or a private/post-cutoff holdout."
+            ),
         }
-    
-    def _compute_risk(self, completion_overlap, exact_match, 
-                      knows_source, avg_confidence) -> float:
-        """Compute overall contamination risk score"""
-        risk = 0.0
-        risk += 0.3 * completion_overlap
-        risk += 0.3 * (1.0 if exact_match else 0.0)
-        risk += 0.2 * (1.0 if knows_source else 0.0)
-        risk += 0.2 * min(1.0, max(0.0, (avg_confidence + 2) / 4))
-        return risk
-    
-    def _recommend(self, contamination_rate: float) -> str:
-        if contamination_rate > 0.3:
-            return "HIGH CONTAMINATION: Do not use this benchmark. Create private eval set."
-        elif contamination_rate > 0.1:
-            return "MODERATE CONTAMINATION: Supplement with private evals. Discount scores by ~15%."
-        else:
-            return "LOW CONTAMINATION: Benchmark likely reliable. Continue monitoring."
     
     def _text_similarity(self, text1: str, text2: str) -> float:
         """Simple token overlap similarity"""
@@ -462,25 +469,27 @@ class ContaminationDetector:
 
 class BenchmarkDecontaminator:
     """
-    Create decontaminated versions of existing benchmarks.
-    Transforms questions while preserving the skill being tested.
+    Generate candidate benchmark variants for human validation.
+
+    A transformation can change difficulty, introduce ambiguity, or leak the
+    answer. It is not "decontaminated" merely because an LLM rewrote it.
     """
     
     def __init__(self, llm):
         self.llm = llm
     
     def decontaminate_item(self, item: Dict, method: str = "paraphrase") -> Dict:
-        """Transform a benchmark item to reduce contamination risk"""
+        """Generate a candidate variant; validation remains required."""
         
         methods = {
             "paraphrase": self._paraphrase,
             "context_noise": self._add_context_noise,
             "polarity_reverse": self._reverse_polarity,
-            "format_change": self._change_format,
-            "difficulty_shift": self._shift_difficulty,
         }
-        
-        transform = methods.get(method, self._paraphrase)
+
+        if method not in methods:
+            raise ValueError(f"Unsupported method: {method}")
+        transform = methods[method]
         return transform(item)
     
     def _paraphrase(self, item: Dict) -> Dict:
@@ -495,7 +504,12 @@ Answer: {item['answer']}
 Provide the rephrased question only:"""
         
         new_question = self.llm.generate(prompt, temperature=0.7)
-        return {**item, "question": new_question, "decontaminated": True, "method": "paraphrase"}
+        return {
+            **item,
+            "question": new_question,
+            "variant_method": "paraphrase",
+            "validated": False,
+        }
     
     def _add_context_noise(self, item: Dict) -> Dict:
         """Add irrelevant context to test robustness"""
@@ -508,7 +522,12 @@ Original: {item['question']}
 Provide the modified question:"""
         
         new_question = self.llm.generate(prompt, temperature=0.7)
-        return {**item, "question": new_question, "decontaminated": True, "method": "context_noise"}
+        return {
+            **item,
+            "question": new_question,
+            "variant_method": "context_noise",
+            "validated": False,
+        }
     
     def _reverse_polarity(self, item: Dict) -> Dict:
         """Ask for the opposite (which is NOT correct, etc.)"""
@@ -526,15 +545,25 @@ Provide both the new question and new answer as JSON:
         import json
         try:
             parsed = json.loads(result)
-            return {**item, **parsed, "decontaminated": True, "method": "polarity_reverse"}
-        except:
-            return item
+        except json.JSONDecodeError as exc:
+            raise ValueError("Model did not return valid variant JSON") from exc
+        if not isinstance(parsed, dict) or not {"question", "answer"} <= parsed.keys():
+            raise ValueError("Variant JSON must contain question and answer")
+        return {
+            **item,
+            **parsed,
+            "variant_method": "polarity_reverse",
+            "validated": False,
+        }
 
 
 class DynamicBenchmarkGenerator:
     """
-    Generate fresh evaluation items on-the-fly.
-    The gold standard for contamination-free evaluation.
+    Generate candidate evaluation items on-the-fly.
+
+    Fresh generation reduces exact-item reuse; it does not prove that an item
+    is novel, uncontaminated, correct, or unmemorized. Validate answers and run
+    overlap checks before using generated candidates for measurement.
     """
     
     def __init__(self, llm, domain_spec: Dict):
@@ -545,7 +574,7 @@ class DynamicBenchmarkGenerator:
                           num_items: int,
                           difficulty_distribution: Dict = None) -> List[Dict]:
         """
-        Generate a fresh evaluation set that has never been seen by any model.
+        Generate a requested number of fresh candidate items.
         
         Uses AdEval-style approach: extract knowledge points, search for 
         current information, generate multi-level questions.
@@ -560,9 +589,23 @@ class DynamicBenchmarkGenerator:
                 "creating": 0.05        # Bloom's Level 6
             }
         
+        if num_items < 0:
+            raise ValueError("num_items must be non-negative")
+        if not difficulty_distribution or any(p < 0 for p in difficulty_distribution.values()):
+            raise ValueError("difficulty proportions must be non-negative")
+        total = sum(difficulty_distribution.values())
+        if total <= 0:
+            raise ValueError("difficulty proportions must sum to a positive value")
+
+        normalized = {level: p / total for level, p in difficulty_distribution.items()}
+        raw = {level: num_items * p for level, p in normalized.items()}
+        counts = {level: int(value) for level, value in raw.items()}
+        remainder = num_items - sum(counts.values())
+        for level in sorted(raw, key=lambda key: raw[key] - counts[key], reverse=True)[:remainder]:
+            counts[level] += 1
+
         items = []
-        for level, proportion in difficulty_distribution.items():
-            n = int(num_items * proportion)
+        for level, n in counts.items():
             level_items = self._generate_level_items(level, n)
             items.extend(level_items)
         
@@ -592,12 +635,15 @@ Each should be completely original (not from any existing benchmark).
 Return as JSON list: [{{"question": "...", "answer": "...", "reasoning": "...", 
 "cognitive_level": "{cognitive_level}", "difficulty": 1-5}}]"""
         
-        result = self.llm.generate(prompt, temperature=0.8)
+        result = self.llm.generate(prompt)
         import json
         try:
-            return json.loads(result)
-        except:
-            return []
+            parsed = json.loads(result)
+        except json.JSONDecodeError as exc:
+            raise ValueError("generator returned invalid JSON") from exc
+        if not isinstance(parsed, list) or len(parsed) != count:
+            raise ValueError(f"generator returned {len(parsed) if isinstance(parsed, list) else 'non-list'} items; expected {count}")
+        return parsed
 ```
 
 ---
@@ -706,7 +752,8 @@ Step 4: ITERATIVE RECONSTRUCTION
   → Contamination risk minimized
 
 RESULT: Each evaluation run uses DIFFERENT questions testing the SAME skills.
-Models can't memorize because the questions are always new.
+Freshly generated questions reduce exact-item reuse, but they can still
+reproduce known material or invalid labels. Validate novelty and answers.
 ```
 
 ### Self-Evolving Benchmarks
@@ -870,14 +917,16 @@ For eval engineers the implication is uncomfortable but actionable: **realism is
 
 ---
 
-## 12.9 Building Contamination-Proof Eval Systems
+## 12.9 Building Contamination-Resistant Eval Systems
 
 ### The Private Eval Infrastructure
 
+The following is a **control-flow sketch**, not production security code. Private storage, access logs, rotation, and overlap checks reduce specific exposure and reuse risks; none proves that a set is uncontaminated. The encryption methods below are placeholders, and every similarity threshold must be calibrated and supplemented with provenance review.
+
 ```python
 """
-Enterprise-grade contamination-proof evaluation infrastructure.
-Never publish your eval data. Rotate questions regularly.
+Illustrative contamination-resistant evaluation controls.
+Limit exposure, log access, rotate items, and validate provenance.
 """
 
 import hashlib
@@ -961,7 +1010,7 @@ class PrivateEvalVault:
                         domain_spec: Dict) -> str:
         """
         Retire old eval set and generate a fresh one.
-        This is the key to contamination-proof evaluation.
+        Rotation reduces repeated-item exposure; it does not prove novelty.
         """
         old_record = self.storage.get(old_id)
         
@@ -977,7 +1026,7 @@ class PrivateEvalVault:
             new_items
         )
         
-        if overlap > 0.1:  # More than 10% semantic overlap
+        if overlap > 0.1:  # Illustrative threshold; calibrate for the domain
             raise ValueError(f"Generated items have {overlap:.0%} overlap with retired set")
         
         # Retire old, store new
@@ -1080,60 +1129,73 @@ class PrivateEvalVault:
 
 ## 12.11 Worked Examples (2026)
 
-Two small probes that catch the most common contamination patterns in 5 minutes.
+These are **illustrative diagnostic probes**, not contamination detectors. They
+help you decide which items deserve provenance review or replacement. The
+sourced incidents in Sections 12.4, 12.7, and 12.8 are the documented cases in
+which benchmark-integrity problems were actually found.
 
 #### Example 1 — Canary-string memorization probe
 
-If a model can complete a benchmark item from a tiny prefix, it has likely seen it during training.
+Unusually exact reproduction of the *rest of a canonical question* from a short
+prefix can reveal memorized wording. Ordinary correctness is not the signal,
+and a familiar phrase can produce a false positive.
 
 ```python
+from difflib import SequenceMatcher
 from openai import OpenAI
 client = OpenAI()
 
-def memorization_score(item: dict, model="gpt-5.5") -> float:
-    """Return fraction of the GROUND-TRUTH answer the model regenerates
-    given only the FIRST 8 WORDS of the canonical question."""
-    prefix = " ".join(item["question"].split()[:8])
+def canonical_suffix_similarity(item: dict, model="gpt-5.5") -> float:
+    """Compare a prompted continuation with the hidden canonical suffix."""
+    words = item["question"].split()
+    split_at = max(1, len(words) // 2)
+    prefix = " ".join(words[:split_at])
+    canonical_suffix = " ".join(words[split_at:])
     out = client.chat.completions.create(
-        model=model, temperature=0,
+        model=model,
         messages=[{"role": "user",
                    "content": f"Continue this benchmark item verbatim:\n{prefix}"}],
     ).choices[0].message.content
-    # Token-overlap with the *exact* canonical answer is the smoking gun
-    answer_tokens = set(item["answer"].lower().split())
-    out_tokens    = set(out.lower().split())
-    return len(answer_tokens & out_tokens) / max(1, len(answer_tokens))
+    normalize = lambda text: " ".join((text or "").lower().split())
+    return SequenceMatcher(
+        None, normalize(out), normalize(canonical_suffix)
+    ).ratio()
 
-# >0.5 on randomly sampled items → strong contamination signal
-scores = [memorization_score(x) for x in mmlu_sample]
-print("mean overlap:", sum(scores)/len(scores))
+# Inspect item-level results. Compare against unpublished control questions
+# with similar length and template; do not turn the ratio into an unsupported
+# universal contamination threshold.
+scores = [canonical_suffix_similarity(x) for x in benchmark_sample]
+print(sorted(zip([x["id"] for x in benchmark_sample], scores), key=lambda x: -x[1]))
 ```
 
 #### Example 2 — Original vs paraphrased delta
 
-If the model scores meaningfully higher on the canonical wording than on a semantically-identical paraphrase, the gap is (mostly) memorization.
+A paired drop on independently validated variants catches **surface-form
+sensitivity**. Memorization is one possible explanation, but so are changed
+difficulty, ambiguity, or ordinary prompt brittleness.
 
 ```python
-from anthropic import Anthropic
-client = Anthropic()
+def compare_validated_variants(items, validated_variants):
+    """Both lists must use the same IDs and independently verified answers."""
+    if [x["id"] for x in items] != [x["id"] for x in validated_variants]:
+        raise ValueError("Original and variant items must be paired by ID")
 
-def paraphrase(q: str) -> str:
-    r = client.messages.create(
-        model="claude-sonnet-4-6", max_tokens=200, temperature=0.4,
-        messages=[{"role":"user","content":
-            f"Paraphrase this question. Keep the answer the same. "
-            f"Change wording, sentence structure, and any proper nouns that don't "
-            f"affect the answer.\n\nQ: {q}"}])
-    return r.content[0].text
-
-orig_acc = run_eval(items)                              # canonical wording
-para_acc = run_eval([{**i, "question": paraphrase(i["question"])} for i in items])
-print(f"Original: {orig_acc:.2%}   Paraphrased: {para_acc:.2%}   Gap: {orig_acc-para_acc:+.2%}")
-# Healthy gap: 0–3%. >5% gap → contamination strongly suspected.
-# Always report BOTH numbers in any benchmark claim.
+    original = run_eval(items)
+    variant = run_eval(validated_variants)
+    return {
+        "original_accuracy": original,
+        "variant_accuracy": variant,
+        "paired_gap": original - variant,
+        "interpretation": (
+            "Surface-form sensitivity; combine with provenance, private-holdout, "
+            "and prefix-completion evidence before attributing it to memorization."
+        ),
+    }
 ```
 
-These two probes — plus the dynamic-rewording recipe in section 12.6 — are the minimum hygiene required to take any 2026 leaderboard score seriously.
+Pre-register the gap worth investigating and report a paired confidence
+interval. For a consequential decision, these probes supplement—not
+replace—a private or post-cutoff holdout and an environment-access audit.
 
 ---
 
@@ -1143,8 +1205,11 @@ These two probes — plus the dynamic-rewording recipe in section 12.6 — are t
 Take a public benchmark (MMLU, HumanEval, GSM8K) and:
 - Run the memorization probes from Section 12.4 against a model
 - Estimate contamination risk
-- Generate a decontaminated version of 10 items
-- Compare model performance on original vs decontaminated items
+- Generate candidate variants of 10 items and have a second reviewer validate
+  answer equivalence and difficulty
+- Compare performance on the paired original and validated-variant items;
+  describe the result as surface-form sensitivity unless other evidence
+  supports a contamination attribution
 
 ### Exercise 2: Build a Private Eval System
 Design and implement a private evaluation system for your use case:

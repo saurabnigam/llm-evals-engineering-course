@@ -1,10 +1,17 @@
-# Module 8: Real-World Case Studies
+# Module 8: Worked and Documented Case Studies
+
+## In Plain English
+
+A case study is useful only if you know what kind of evidence it is. This chapter separates **worked composites**, which teach design by using invented but clearly labeled data, from **documented public cases**, whose results and failure claims are traceable to a source. Never cite a composite number as industry evidence; use it to rehearse the diagnosis and decision.
 
 ## Overview
 
-This module presents detailed case studies of evaluation systems in production. Each case study includes the problem, architecture, implementation details, and lessons learned.
+This module combines teaching composites with sourced public cases. Each one is
+explicit about whether the organization, incident, and numbers are invented or
+documented, so readers can learn from a design without mistaking it for field
+evidence.
 
-Case studies 1–6 are practitioner-scale composites (realistic but anonymized/illustrative numbers). Case studies 7–9 are documented public evaluations from 2025–2026 — a frontier-model release, an economically grounded benchmark, and a long-horizon agent eval — with every number traceable to a primary source. Case study 10 is a **production multimodal agent** (Uber Eats image enhancement) presented publicly by the team that built it: architecture and design principles from the source, arithmetic worked here.
+Case studies 1–6 are practitioner-scale **worked composites**: their companies, incidents, and numbers are invented for teaching, not anonymized claims about a real deployment. Case studies 7–9 are documented public evaluations from 2025–2026 — a frontier-model release, an economically grounded benchmark, and a long-horizon agent eval — with every number traceable to a primary source. Case study 10 is a **production multimodal agent** (Uber Eats image enhancement) presented publicly by the team that built it: architecture and design principles from the source, arithmetic worked here.
 
 **Which case study to read for which problem:**
 
@@ -19,13 +26,24 @@ Case studies 1–6 are practitioner-scale composites (realistic but anonymized/i
 | Release gating, safety, third-party audit | 7 (Fable 5 system card) |
 | **Generative pipeline, reference-free, brand-critical, self-correcting loop** | **10 (Uber Eats image agent)** |
 
+**What evidence each group provides:**
+
+| Cases | What the evals cover | Failure they expose | Decision they enable | Evidence status |
+|---|---|---|---|---|
+| 1–4 | Text quality, execution, retrieval, moderation trade-offs | Why one aggregate score can hide policy, retrieval, security, or rare-class failures | Design a layered suite and choose the right metric | Worked composites; numbers are illustrative |
+| 5–6 | Tool trajectories, repeated reliability, visible-rationale sensitivity, reasoning effort | Successful-looking final text despite a wrong tool action; extra reasoning cost with little gain | Add outcome/policy gates or choose an effort setting | Worked composites; no claimed production incident |
+| 7 | Capability, safeguards, alignment, third-party testing | A release can look strong on capability while failing a must-pass safeguard | Read a system card as a portfolio of evidence | Documented model/system-card evidence |
+| 8 | Open-ended professional deliverables | Exact match cannot grade a slide deck, legal memo, or engineering artifact | Use blind expert pairwise comparison and task-specific rubrics | Documented GDPval methodology/results |
+| 9 | Long-horizon agent behavior | End-state profit hides deception, policy violation, or compounding operational mistakes | Inspect trajectories and report repeated-run reliability | Documented Vending-Bench results/failures |
+| 10 | Router recall, generation faithfulness, aesthetics, and business outcomes | The router censors hard examples; a beautiful output changes the product | Audit rejected inputs and use faithfulness as a veto | Sourced production architecture; local arithmetic labeled illustrative |
+
 ---
 
-## Case Study 1: Customer Support Chatbot Evaluation
+## Case Study 1: Customer Support Chatbot Evaluation (Worked Composite)
 
 ### The Problem
 
-A large e-commerce company deployed an AI chatbot handling 100,000+ customer inquiries daily. They needed to ensure:
+Suppose an e-commerce company is designing an AI chatbot for high-volume support. The exercise is to ensure:
 - Accurate product and policy information
 - Appropriate escalation to human agents
 - Empathetic responses to frustrated customers
@@ -145,8 +163,8 @@ EVAL_DIMENSIONS = {
 #### Step 2: Bootstrap Initial Dataset
 
 ```python
-# Week 1: Expert seeding
-expert_examples = 50  # Domain experts created 50 high-quality examples
+# Week 1: Expert seeding (actual reviewed records, not a count)
+expert_examples = expert_workflow.load_reviewed_examples(limit=50)
 
 # Week 2: Synthetic expansion
 synthetic_examples = generator.generate_test_cases(
@@ -164,10 +182,15 @@ production_sample = active_sampler.combined_sampling(
 
 # LLM labeling with human validation
 labeled = bootstrap_labeler.label_batch(production_sample, criteria=EVAL_DIMENSIONS)
-human_validated = human_review_queue.process(labeled['uncertain_cases'])
+review_queue = bootstrap_labeler.create_human_review_queue(labeled)
 
-# Final dataset: 750 labeled examples
-initial_eval_set = expert_examples + synthetic_examples + production_sample
+# Synthetic and production candidates are not gold until validated.
+reviewed_synthetic = human_review_queue.process(synthetic_examples)
+reviewed_production = human_review_queue.process(
+    review_queue['uncertain_cases'] + review_queue['validation_sample']
+)
+initial_eval_set = expert_examples + reviewed_synthetic + reviewed_production
+assert all(item.get('human_verified') for item in initial_eval_set)
 ```
 
 #### Step 3: Real-Time Safety Filter
@@ -176,7 +199,10 @@ initial_eval_set = expert_examples + synthetic_examples + production_sample
 class RealTimeSafetyFilter:
     """Blocks unsafe responses before they reach customers"""
     
-    def __init__(self):
+    def __init__(self, min_safe_score: float):
+        if not 0 <= min_safe_score <= 1:
+            raise ValueError("min_safe_score must be calibrated on a labeled set")
+        self.min_safe_score = min_safe_score
         # Fast keyword filter
         self.blocked_patterns = self._load_blocked_patterns()
         
@@ -193,7 +219,7 @@ class RealTimeSafetyFilter:
         """
         start = time.time()
         
-        # Level 1: Keyword filter (<1ms)
+        # Level 1: Keyword filter (measure latency on your deployment)
         if self._contains_blocked_content(response):
             return {
                 'safe': False,
@@ -201,7 +227,7 @@ class RealTimeSafetyFilter:
                 'latency_ms': (time.time() - start) * 1000
             }
         
-        # Level 2: Policy check (<5ms)
+        # Level 2: Policy check
         policy_result = self.policy_checker.check(response, context)
         if not policy_result['compliant']:
             return {
@@ -210,9 +236,10 @@ class RealTimeSafetyFilter:
                 'latency_ms': (time.time() - start) * 1000
             }
         
-        # Level 3: ML classifier (<10ms)
+        # Level 3: calibrated ML classifier. Choose the operating point from
+        # false-accept/false-reject costs and report it with the result.
         safety_score = self.safety_classifier.predict(response)
-        if safety_score < 0.95:  # High threshold for safety
+        if safety_score < self.min_safe_score:
             return {
                 'safe': False,
                 'reason': f"low_safety_score:{safety_score:.2f}",
@@ -286,7 +313,7 @@ class AsyncQualityEvaluator:
             await self.anomaly_detector.check(scores)
 ```
 
-### Results
+### Illustrative comparison (not measured production results)
 
 | Metric | Before | After 3 Months |
 |--------|--------|----------------|
@@ -296,20 +323,20 @@ class AsyncQualityEvaluator:
 | Resolution Rate | 45% | 68% |
 | Average Handle Time | 8 min | 3 min |
 
-### Lessons Learned
+### What the design would teach
 
-1. **Safety must be real-time**: Async evaluation isn't enough for safety-critical responses
-2. **Empathy matters more than accuracy**: Customers forgave minor errors if treated well
-3. **Escalation is binary**: Must be near-perfect - wrong escalation wastes human time
-4. **Feedback is gold**: Customer thumbs up/down correlated highly with expert evaluation
+1. **Safety enforcement belongs before delivery:** an asynchronous score can diagnose a harmful response but cannot recall it from the user.
+2. **Accuracy and empathy answer different questions:** neither should be claimed to “matter more” without a controlled outcome study.
+3. **Escalation needs rare-class metrics:** overall accuracy can look high while recall on conversations needing a human is zero (Module 1 §1.5).
+4. **Feedback routes review:** thumbs signals are selected proxies until human comparison measures their relationship to the target criterion.
 
 ---
 
-## Case Study 2: Code Generation Assistant
+## Case Study 2: Code Generation Assistant (Worked Composite)
 
 ### The Problem
 
-A developer tools company built an AI coding assistant. They needed to ensure:
+Suppose a developer-tools company is designing an AI coding assistant. It needs to ensure:
 - Generated code was syntactically correct
 - Code solved the requested problem
 - Code followed best practices
@@ -637,7 +664,7 @@ jobs:
             --min-quality 0.70
 ```
 
-### Results Dashboard
+### Illustrative dashboard
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -674,11 +701,11 @@ jobs:
 
 ---
 
-## Case Study 3: RAG System Evaluation
+## Case Study 3: RAG System Evaluation (Worked Composite)
 
 ### The Problem
 
-A legal tech company built a RAG (Retrieval-Augmented Generation) system for legal research. Critical requirements:
+Suppose a legal-tech company is designing a RAG (Retrieval-Augmented Generation) system for legal research. Critical requirements:
 - Retrieved documents must be relevant to the query
 - Generated answers must be grounded in retrieved documents
 - No hallucinated case citations
@@ -726,226 +753,79 @@ A legal tech company built a RAG (Retrieval-Augmented Generation) system for leg
 
 ### Implementation
 
+Concrete teaching case: the query asks whether a customer may terminate within
+45 days. Retrieval returns a highly similar 2023 policy saying **30 days** but
+misses the 2025 amendment saying **60 days**. A lexical-relevance check passes;
+retrieval-recall/freshness catches the missing amendment. Groundedness alone
+also passes an answer that accurately repeats the obsolete 30-day document.
+The end-to-end reference criterion catches the wrong conclusion. The decision
+is to fix corpus/version retrieval, not tune the answer prompt. This is a worked
+composite; it demonstrates why the four verdicts below stay separate.
+
 ```python
 class RAGEvaluator:
-    """Comprehensive RAG system evaluation"""
-    
-    def __init__(self):
-        self.retrieval_evaluator = RetrievalEvaluator()
-        self.generation_evaluator = GenerationEvaluator()
-        self.e2e_evaluator = EndToEndEvaluator()
-    
-    async def evaluate(self, 
-                      query: str,
-                      retrieved_docs: List[dict],
-                      generated_answer: str,
-                      ground_truth: dict = None) -> dict:
-        """Full RAG evaluation"""
-        
-        results = {}
-        
-        # 1. Retrieval Quality
-        results['retrieval'] = await self.retrieval_evaluator.evaluate(
-            query=query,
-            retrieved_docs=retrieved_docs,
-            relevant_docs=ground_truth.get('relevant_docs') if ground_truth else None
+    """Compose calibrated criterion evaluators without hiding vetoes in an average."""
+
+    def __init__(
+        self,
+        retrieval_eval,
+        groundedness_eval,
+        citation_eval,
+        answer_eval,
+    ):
+        self.retrieval_eval = retrieval_eval
+        self.groundedness_eval = groundedness_eval
+        self.citation_eval = citation_eval
+        self.answer_eval = answer_eval
+
+    async def evaluate(
+        self,
+        query: str,
+        retrieved_docs: List[dict],
+        generated_answer: str,
+        ground_truth: dict | None = None,
+    ) -> dict:
+        """Each injected evaluator returns verdict PASS/FAIL/UNKNOWN plus evidence."""
+        relevant_ids = (
+            ground_truth.get("relevant_docs") if ground_truth is not None else None
         )
-        
-        # 2. Generation Quality
-        results['generation'] = await self.generation_evaluator.evaluate(
-            query=query,
-            context_docs=retrieved_docs,
-            generated_answer=generated_answer
+        reference_answer = (
+            ground_truth.get("answer") if ground_truth is not None else None
         )
-        
-        # 3. End-to-End
-        if ground_truth:
-            results['e2e'] = await self.e2e_evaluator.evaluate(
-                query=query,
-                generated_answer=generated_answer,
-                ground_truth_answer=ground_truth.get('answer')
-            )
-        
-        # Compute overall score
-        results['overall'] = self._aggregate_scores(results)
-        
-        return results
-    
-    def _aggregate_scores(self, results: dict) -> dict:
-        weights = {
-            'retrieval': 0.3,
-            'generation': 0.4,
-            'e2e': 0.3
+        context = "\n\n".join(doc["content"] for doc in retrieved_docs)
+        results = {
+            "retrieval": await self.retrieval_eval(
+                query, retrieved_docs, relevant_ids
+            ),
+            "groundedness": await self.groundedness_eval(
+                generated_answer, context
+            ),
+            "citation_integrity": await self.citation_eval(
+                generated_answer, retrieved_docs
+            ),
+            "answer_quality": await self.answer_eval(
+                query, generated_answer, reference_answer
+            ),
         }
-        
-        score = 0
-        for component, weight in weights.items():
-            if component in results:
-                score += results[component].get('score', 0) * weight
-        
+
+        required = ["retrieval", "groundedness", "citation_integrity", "answer_quality"]
+        measured = [name for name in required if results[name]["verdict"] != "UNKNOWN"]
         return {
-            'score': score,
-            'passed': score >= 0.75
+            "criteria": results,
+            "coverage": len(measured) / len(required),
+            "passed": (
+                all(results[name]["verdict"] == "PASS" for name in required)
+                if len(measured) == len(required) else None
+            ),
+            "decision": (
+                "PASS only when every required criterion is measured and passes; "
+                "otherwise inspect the criterion evidence."
+            ),
         }
 
-class RetrievalEvaluator:
-    """Evaluate retrieval quality"""
-    
-    async def evaluate(self, 
-                      query: str,
-                      retrieved_docs: List[dict],
-                      relevant_docs: List[str] = None) -> dict:
-        
-        result = {
-            'score': 0,
-            'metrics': {}
-        }
-        
-        # If we have ground truth relevance labels
-        if relevant_docs:
-            # Precision: How many retrieved are relevant?
-            retrieved_ids = [d['id'] for d in retrieved_docs]
-            relevant_retrieved = len(set(retrieved_ids) & set(relevant_docs))
-            precision = relevant_retrieved / len(retrieved_docs) if retrieved_docs else 0
-            
-            # Recall: How many relevant did we retrieve?
-            recall = relevant_retrieved / len(relevant_docs) if relevant_docs else 0
-            
-            # NDCG: Ranking quality
-            ndcg = self._compute_ndcg(retrieved_docs, relevant_docs)
-            
-            result['metrics']['precision'] = precision
-            result['metrics']['recall'] = recall
-            result['metrics']['ndcg'] = ndcg
-            result['score'] = (precision + recall + ndcg) / 3
-        
-        else:
-            # No ground truth - use LLM relevance judgment
-            relevance_scores = await self._llm_relevance_check(query, retrieved_docs)
-            result['metrics']['avg_relevance'] = np.mean(relevance_scores)
-            result['metrics']['top_k_relevance'] = np.mean(relevance_scores[:3])
-            result['score'] = result['metrics']['avg_relevance']
-        
-        return result
-    
-    async def _llm_relevance_check(self, 
-                                   query: str, 
-                                   docs: List[dict]) -> List[float]:
-        """Use LLM to judge document relevance"""
-        
-        scores = []
-        for doc in docs:
-            prompt = f"""Rate the relevance of this document to the query.
-
-Query: {query}
-
-Document:
-{doc['content'][:1000]}
-
-Rate from 0.0 (not relevant) to 1.0 (highly relevant).
-Return only the number.
-"""
-            response = await self.llm.complete(prompt)
-            scores.append(float(response.strip()))
-        
-        return scores
-
-class GenerationEvaluator:
-    """Evaluate generation quality (groundedness, accuracy, attribution)"""
-    
-    async def evaluate(self,
-                      query: str,
-                      context_docs: List[dict],
-                      generated_answer: str) -> dict:
-        
-        result = {
-            'score': 0,
-            'metrics': {},
-            'issues': []
-        }
-        
-        # Combine context
-        context = "\n\n".join([d['content'] for d in context_docs])
-        
-        # 1. Groundedness: Is everything in the answer supported by context?
-        groundedness = await self._check_groundedness(generated_answer, context)
-        result['metrics']['groundedness'] = groundedness['score']
-        if groundedness['unsupported_claims']:
-            result['issues'].extend([
-                f"Unsupported claim: {claim}" 
-                for claim in groundedness['unsupported_claims']
-            ])
-        
-        # 2. Attribution: Are sources properly cited?
-        attribution = await self._check_attribution(generated_answer, context_docs)
-        result['metrics']['attribution'] = attribution['score']
-        
-        # 3. Hallucination detection
-        hallucinations = await self._detect_hallucinations(generated_answer, context)
-        result['metrics']['no_hallucinations'] = 1.0 - len(hallucinations) * 0.1
-        if hallucinations:
-            result['issues'].extend([
-                f"Potential hallucination: {h}" for h in hallucinations
-            ])
-        
-        # Weighted score
-        result['score'] = (
-            0.5 * result['metrics']['groundedness'] +
-            0.2 * result['metrics']['attribution'] +
-            0.3 * result['metrics']['no_hallucinations']
-        )
-        
-        return result
-    
-    async def _check_groundedness(self, answer: str, context: str) -> dict:
-        """Check if answer is grounded in context"""
-        
-        prompt = f"""Analyze if this answer is fully supported by the provided context.
-
-Context:
-{context[:3000]}
-
-Answer:
-{answer}
-
-Identify:
-1. Claims that are fully supported by the context
-2. Claims that are partially supported
-3. Claims that are NOT supported (potential hallucinations)
-
-Return JSON:
-{{
-    "supported_claims": ["..."],
-    "partially_supported": ["..."],
-    "unsupported_claims": ["..."],
-    "score": 0.X  // 1.0 = fully grounded, 0.0 = completely ungrounded
-}}
-"""
-        
-        response = await self.llm.complete(prompt, response_format='json')
-        return json.loads(response)
-    
-    async def _detect_hallucinations(self, answer: str, context: str) -> List[str]:
-        """Detect specific hallucinations"""
-        
-        # Extract citations/references from answer
-        citations = self._extract_citations(answer)
-        
-        hallucinations = []
-        for citation in citations:
-            if not self._citation_in_context(citation, context):
-                hallucinations.append(f"Citation not found: {citation}")
-        
-        # Extract facts/claims
-        claims = await self._extract_claims(answer)
-        for claim in claims:
-            if not await self._claim_supported(claim, context):
-                hallucinations.append(f"Unsupported claim: {claim}")
-        
-        return hallucinations
 ```
 
-### Results
+### Illustrative comparison (not measured production results)
 
 | Metric | Before RAG Eval | After 6 Months |
 |--------|-----------------|----------------|
@@ -957,11 +837,11 @@ Return JSON:
 
 ---
 
-## Case Study 4: Content Moderation System
+## Case Study 4: Content Moderation System (Worked Composite)
 
 ### The Problem
 
-A social media platform needed to automatically moderate user-generated content. Requirements:
+Suppose a social platform is designing automated moderation for user-generated content. Requirements:
 - Detect hate speech, harassment, violence
 - Handle edge cases and context-dependent decisions
 - Minimize false positives (over-moderation)
@@ -1156,10 +1036,10 @@ class ModerationEvaluator:
 
 ---
 
-## Case Study 5: Tool-Using Agent (Customer-Refund Bot)
+## Case Study 5: Tool-Using Agent (Customer-Refund Bot, Worked Composite)
 
 ### Context
-A mid-size DTC retailer ships a Claude Sonnet 4.6 agent (`claude-sonnet-4-6` — picked partly on its τ²-bench Retail score of 91.7, [Sonnet 4.6 system card, Table 2.1.A](https://www-cdn.anthropic.com/78073f739564e986ff3e28522761a7a0b4484f84.pdf)) with three tools: `lookup_order`, `issue_refund`, `escalate_to_human`. Eval focus is **trajectory correctness**, not just final-message correctness, because a wrong tool call (e.g. refunding twice) costs real money.
+Suppose a mid-size DTC retailer is considering a Claude Sonnet 4.6 agent (`claude-sonnet-4-6`; its public τ²-bench Retail result is 91.7 in the [Sonnet 4.6 system card, Table 2.1.A](https://www-cdn.anthropic.com/78073f739564e986ff3e28522761a7a0b4484f84.pdf)) with three tools: `lookup_order`, `issue_refund`, `escalate_to_human`. The product and measurements below are illustrative. Eval focus is **outcome plus policy-relevant trajectory constraints**, because a correct final message cannot undo a duplicated or unauthorized refund.
 
 ### Eval Design
 
@@ -1207,7 +1087,7 @@ def refund_agent_eval():
     )
 ```
 
-### Results After 6 Weeks
+### Worked six-week comparison (illustrative)
 
 | Metric | Week 1 | Week 6 |
 |--------|--------|--------|
@@ -1216,10 +1096,10 @@ def refund_agent_eval():
 | Unauthorized actions (adversarial) | 4 / 30 | 0 / 30 |
 | Median steps | 6 | 3 |
 
-### Key Insights
-1. Trajectory metrics caught 3 bugs that final-output metrics missed (agent refunded then apologized — “successful” output, broken behavior).
-2. Sandboxed eval was non-negotiable — a buggy iteration tried to call `issue_refund` 50 times in a loop on one task.
-3. Adversarial scenarios were the highest-ROI items per dollar spent.
+### What each layer would catch
+1. An outcome-only text grader can miss “refund issued, then apologized”; the transaction state and authorization rule catch it.
+2. A sandboxed fake refund service safely exposes loops such as 50 attempted calls without moving real money.
+3. Adversarial cross-account and duplicate-refund cases test the highest-cost policy failures; their value should be measured from defects found, not asserted as ROI.
 
 ### 2026 Postscript: The Industry Playbook Caught Up
 
@@ -1232,10 +1112,10 @@ When this system was built, trajectory-vs-outcome grading was a judgment call. A
 
 ---
 
-## Case Study 6: Reasoning-Model Math Tutor
+## Case Study 6: Reasoning-Model Math Tutor (Worked Composite)
 
 ### Context
-A tutoring product uses a GPT-5-class reasoning model to walk students through problems. Both *answer correctness* and *reasoning quality* matter — a right answer with bad reasoning teaches nothing.
+Suppose a tutoring product uses a reasoning model to walk students through problems. Both *answer correctness* and the quality of any reasoning shown to the student matter — a right answer paired with an invalid visible method teaches the wrong lesson. The product and results below are illustrative.
 
 ### Eval Design
 
@@ -1243,19 +1123,20 @@ A tutoring product uses a GPT-5-class reasoning model to walk students through p
 |-----------|--------|
 | Final answer | Exact match against numerical / symbolic ground truth (SymPy) |
 | Step-level correctness | Process-reward model (PRM) scores each step 0–1 |
-| CoT faithfulness | Perturb a key intermediate value; does the final answer change consistently? |
+| Visible-rationale sensitivity | If the application supplies intermediate steps back to the model, perturb one; does the answer respond consistently? This does not reveal or validate hidden CoT. |
 | Pedagogical quality | LLM-judge rubric on a 50-item set, calibrated against 2 math teachers |
 | Reasoning effort | Sweep `reasoning_effort` ∈ {low, medium, high}; plot accuracy vs latency |
 
-### CoT-Faithfulness Probe (illustrative)
+### Visible-rationale sensitivity probe (illustrative)
 
 ```python
 from openai import OpenAI
 client = OpenAI()
 
-def faithfulness_probe(problem: str, original_steps: list[str]) -> bool:
-    """Replace step k with a wrong value; the final answer should change.
-    If it doesn't, the chain is post-hoc rationalization."""
+def rationale_sensitivity_probe(
+    problem: str, original_steps: list[str], original_answer: str
+) -> dict:
+    """Test sensitivity to supplied steps, not access to hidden reasoning."""
     k = len(original_steps) // 2
     perturbed = original_steps.copy()
     perturbed[k] = perturbed[k].replace("= 12", "= 99")   # inject error
@@ -1263,11 +1144,13 @@ def faithfulness_probe(problem: str, original_steps: list[str]) -> bool:
     cont = client.chat.completions.create(
         model="gpt-5.5", reasoning_effort="low",
         messages=[{"role":"user","content":prompt}]).choices[0].message.content
-    # Faithful chain → the perturbed answer differs from the original
-    return cont.strip() != "<original final answer>"
+    return {
+        "answer_changed": cont.strip() != original_answer.strip(),
+        "perturbed_answer": cont.strip(),
+    }
 ```
 
-### Reasoning-Effort Sweep Result
+### Illustrative reasoning-effort sweep
 
 | `reasoning_effort` | Accuracy | Median latency | Cost / 1k problems |
 |--------------------|----------|----------------|--------------------|
@@ -1278,8 +1161,8 @@ def faithfulness_probe(problem: str, original_steps: list[str]) -> bool:
 **Decision:** ship `medium` to production. The +0.03 from `high` did not justify 4× latency and 4× cost for the tutoring use case.
 
 ### Key Insights
-1. CoT-faithfulness probes flagged a regression in a checkpoint where the model routinely produced confident-but-fabricated reasoning steps that didn’t affect the final answer.
-2. Process-reward scoring caught “right answer, wrong method” — critical for a teaching product.
+1. A rationale-sensitivity probe can catch visible steps that the continuation ignores, but it cannot prove what hidden computation produced the answer.
+2. Step-level checks can catch “right answer, wrong displayed method” — critical for a teaching product when those steps are shown to learners.
 3. The accuracy-vs-effort curve is the single most useful artefact for product decisions on reasoning models. Run it for *every* release.
 
 ---
@@ -1416,16 +1299,17 @@ Agents pass 10-step evals, then fall apart in week-long deployments. [Andon Labs
 - **The eval is an environment, not a dataset** — dataset, harness, and scoring rules are a single artifact. This is the "environments are the new datasets" pattern (Module 11).
 - **A human baseline anchors the scale**: an estimated "good human" operator makes ~$63K/year.
 
-### Results (Vending-Bench 2)
+### Results (dated snapshots, not a live leaderboard)
 
 | Agent | Final balance (1 simulated year) |
 |---|---|
+| Claude Opus 4.6 (Feb 2026 snapshot) | **$8,017.59** |
 | Gemini 3 Pro | $5,478.16 |
 | Claude Opus 4.5 | $4,967.06 |
 | Claude Sonnet 4.5 | $3,849.74 |
-| Estimated good human | ~$63,000 — >10× the best model |
+| Estimated good human | ~$63,000 |
 
-(Source: [Andon Labs](https://andonlabs.com/evals/vending-bench-2), [Vellum analysis](https://www.vellum.ai/blog/claude-opus-4-5-benchmarks).)
+(Sources: [Andon Labs benchmark page](https://andonlabs.com/evals/vending-bench-2) and its [Opus 4.6 evaluation](https://andonlabs.com/blog/opus-4-6-vending-bench). Check the live benchmark before quoting a current leader.)
 
 ### Documented Failure Modes
 
@@ -1441,7 +1325,7 @@ The transcripts, not the leaderboard, are the real product: **context degradatio
 
 1. **At long horizons, grade outcomes.** A year of trajectory has too many defensible paths to grade step-by-step; the bank balance is unambiguous.
 2. **Dollar-denominated metrics travel.** "$5,478 vs a $63K human baseline" lands with executives in a way "0.34 mean reward" never will.
-3. **The headroom is the headline.** While static benchmarks saturate (SWE-bench Verified is at ~95%), the best model still earns <10% of a competent human here — eval design determines whether you can still see the frontier.
+3. **The headroom is the headline.** In the dated snapshots above, the simulated human reference remains far above the tested agents. Eval design determines whether you can still see meaningful separation after short static benchmarks compress near the top.
 4. **Long-horizon failure modes are qualitatively new.** Meltdowns and deception-under-pressure justify the cost of long-horizon evals on their own: you cannot mitigate what your eval never elicits.
 
 ---
@@ -1478,7 +1362,7 @@ metadata└────────┬──────────────
                  │ enhance
                  ▼
         ┌────────────────────────┐
-        │ 2. Edit ⇄ QA Loop      │ ◄─┐  pass@K self-correction
+        │ 2. Edit ⇄ QA Loop      │ ◄─┐  accepted-by-K retries
         │    (directive → edit   │   │
         │     → QA gate)         │ ──┘  fail → re-edit with critique
         └────────┬───────────────┘
@@ -1559,9 +1443,9 @@ Threshold selection then becomes an explicit, defensible trade rather than a vib
 
 *(Illustrative. Marginal cost is Δcompute ÷ Δrecall between adjacent rows.)* Publish this table with every threshold change. "We chose 0.5" is not a decision; **"we bought 19 points of recall at 4.2% compute per point, and declined the next 12 because they cost 12.5% per point — three times the price"** is. The shape of that column is the general finding, not a quirk of these numbers: recall gets sharply more expensive near the top of the range, because the images the router is still missing are the genuinely ambiguous ones.
 
-#### Stage 2 — The edit ⇄ QA loop: pass@K, and a veto criterion that must never be averaged
+#### Stage 2 — The edit ⇄ QA loop: accepted by K, and a veto criterion that must never be averaged
 
-The generation stage is a loop: an agent produces an edit against explicit directives, a **QA gate** scores it on dimensions including plating, **faithfulness**, and realism, and the system iterates — a **pass@K** strategy where failure feeds a critique back into the next attempt. (Full treatment of loop design and its metrics is Module 14.)
+The generation stage is a dependent retry loop: an agent produces an edit against explicit directives, a **QA gate** scores it on dimensions including plating, **faithfulness**, and realism, and failure feeds a critique into the next attempt. Measure **accepted by K** here; reserve pass@k/pass^k for clean, independent trials. (Full treatment of loop design and its metrics is Module 14.)
 
 The eval-design decision that matters most here is **how the QA gate aggregates its dimensions**. The instinct is a weighted average: `0.4·plating + 0.3·faithfulness + 0.3·realism`. That is wrong, and dangerously so, because it lets a beautiful image buy its way past a faithfulness failure. Faithfulness is not a quality dimension. It is a **veto**.
 
@@ -1595,7 +1479,7 @@ SCORED = {  # only consulted once every veto passes
 VERDICT_SCHEMA = {
     "type": "object",
     "properties": {
-        "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+        "verdict": {"type": "string", "enum": ["PASS", "FAIL", "UNKNOWN"]},
         "evidence": {"type": "string", "description": "The specific region or detail relied on."},
         "repair_directive": {"type": "string", "description": "Empty if PASS."},
     },
@@ -1616,12 +1500,13 @@ def judge_criterion(name: str, question: str, original: bytes, edited: bytes) ->
             {"type": "text", "text": "ORIGINAL:"}, _img(original),
             {"type": "text", "text": "EDITED:"}, _img(edited),
             {"type": "text", "text": f"Criterion `{name}`. {question}\n"
-                                     "Answer PASS or FAIL, cite the evidence you relied on, "
-                                     "and if FAIL give one concrete repair directive."},
+                                     "Answer PASS, FAIL, or UNKNOWN; cite the evidence you "
+                                     "relied on, and if FAIL give one repair directive. Use "
+                                     "UNKNOWN when the images do not support a verdict."},
         ]}],
     )
-    if resp.stop_reason == "refusal":          # Opus 5 classifiers can decline — never
-        return {"verdict": "FAIL",             # read content[0] before checking this
+    if resp.stop_reason == "refusal":          # No judgment was measured.
+        return {"verdict": "UNKNOWN",          # Check before reading content[0].
                 "evidence": f"judge refused ({resp.stop_details.category if resp.stop_details else 'unknown'})",
                 "repair_directive": "escalate to human review"}
     return json.loads(next(b.text for b in resp.content if b.type == "text"))
@@ -1631,10 +1516,20 @@ def qa_gate(original: bytes, edited: bytes) -> dict:
     for name, q in VETO.items():
         v = judge_criterion(name, q, original, edited)
         if v["verdict"] == "FAIL":
-            return {"passed": False, "blocked_by": name, **v}
+            return {"status": "FAIL", "passed": False, "blocked_by": name, **v}
+        if v["verdict"] == "UNKNOWN":
+            return {"status": "UNMEASURED", "passed": None,
+                    "blocked_by": f"unmeasured_{name}", **v}
     scores = {n: judge_criterion(n, q, original, edited) for n, q in SCORED.items()}
+    unknown = [n for n, s in scores.items() if s["verdict"] == "UNKNOWN"]
+    if unknown:
+        return {"status": "UNMEASURED", "passed": None,
+                "blocked_by": "incomplete_quality_coverage",
+                "unknown_criteria": unknown, "scores": scores,
+                "repair_directive": "escalate to human review"}
     passed = sum(s["verdict"] == "PASS" for s in scores.values())
     return {
+        "status": "PASS" if passed >= 2 else "FAIL",
         "passed": passed >= 2,                    # quality bar: 2 of 3 aesthetic criteria
         "blocked_by": None if passed >= 2 else "quality_bar",
         "scores": scores,
@@ -1646,8 +1541,8 @@ def qa_gate(original: bytes, edited: bytes) -> dict:
 Three things this structure buys you that a single omnibus "rate this edit 1–5" call does not:
 
 1. **A failure tells you what to fix.** `blocked_by: "faithfulness"` and `blocked_by: "lighting"` route to completely different repairs — and to different owners.
-2. **Isolated calls don't let dimensions contaminate each other.** A gorgeous image drags an omnibus judge's faithfulness assessment upward; a separate call with only the faithfulness question in context can't be seduced.
-3. **The veto is structurally un-tradeable.** No amount of prompt drift on the aesthetic criteria can create a path to publishing an unfaithful image, because the veto is evaluated in code, not by the model.
+2. **Isolated calls reduce cross-criterion halo effects.** A gorgeous image can drag an omnibus judge's faithfulness assessment upward. Isolation narrows that opportunity, but human calibration still determines whether the judge is accurate.
+3. **The veto is structurally un-tradeable.** A measured faithfulness failure cannot be averaged away by aesthetic passes, and an unmeasured veto stops automation for human review. The model can still misclassify the criterion, so the gate needs an audited escape rate.
 
 **And the gate itself needs an eval set.** This is the step production teams skip. The QA gate is a classifier over (original, edited) pairs, so it has precision and recall against human judgment, and those numbers move whenever anyone touches the judge prompt or the model version:
 
@@ -1865,6 +1760,3 @@ The best evaluation systems are invisible to users but essential to the team—t
 ---
 
 **Next:** [Module 9 — LangChain Examples](../09-langchain-examples/README.md) turns the patterns from these case studies into runnable LangChain/LangSmith code.
-
-
-
