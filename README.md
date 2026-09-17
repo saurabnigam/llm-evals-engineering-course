@@ -144,6 +144,25 @@ This revision is anchored on the question *"how were the newest frontier models 
 
 ---
 
+## 📖 Read It as One File
+
+Prefer one document over 17 module folders? [`book.md`](./book.md) is the whole
+course — this README plus every module's README, concatenated in order — and
+[`book.html`](./book.html) is the same content as a single self-contained,
+print-friendly page (renders client-side via [marked.js](https://marked.js.org/),
+no build step). Good for offline reading, printing, or feeding the whole
+course to another tool in one shot. Regenerate either after a course update
+with:
+
+```bash
+python3 build_book.py . book
+```
+
+Both files track the per-module READMEs, which remain the source of truth —
+if they ever disagree, the module READMEs win; re-run the script above.
+
+---
+
 ## 🚀 Quick Start
 
 ### For Complete Beginners (New to ML/AI)
@@ -362,6 +381,8 @@ llm-evals-engineering-course/
 ├── README.md                              # This file
 ├── COURSE_AUDIT.md                        # Chapter-by-chapter QA log and rubric
 ├── test_course_examples.py                # Regression tests for copyable code
+├── book.md / book.html                    # Whole course as one file (see below)
+├── build_book.py                          # Generates book.md / book.html
 ├── 00-prerequisites/                      # ML/AI basics
 ├── 01-fundamentals/                       # Core concepts
 ├── 02-evaluation-methods/                 # All techniques + psychometric & dynamic
