@@ -1480,6 +1480,10 @@ jobs:
 
 Key idea: PRs run a fast/cheap subset (smoke) for fast feedback; main and nightly runs use the strong-model + larger-N suite to catch subtler regressions, with the cost amortized via Batch APIs (see module 5).
 
+#### First-party harnesses (Sept 2026)
+
+Vendors are starting to ship this k-trial, with/without-baseline pattern as a built-in command instead of something you assemble from Example 1–3 yourself. **Claude Code's `claude plugin eval`** (v2.1.269, Sept 11, 2026): `claude plugin eval init` reads the plugin and proposes eval cases and graders, then `claude plugin eval` runs each case 3x *with* the plugin and 3x *without* it, isolating what the plugin actually contributes, and emits JSON + HTML reports ([changelog](https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md)). It's the same paired baseline/candidate design as the bootstrap gate in 7.4.2, just packaged as a CLI subcommand. Separately, **Managed Agents added an `auto` permission-evaluation mode** (Sept 10, 2026): the server evaluates each tool/MCP call and writes a verdict onto the `agent.tool_use` event's `evaluation` field — a production, per-call policy-grading primitive rather than an offline CI gate, but the same "evaluation" concept applied to live traffic ([release notes](https://platform.claude.com/docs/en/release-notes/overview)).
+
 ### 7.7c Evals in the agentic-coding era: when the PR was written by an AI
 
 By 2026 a large and growing share of the diffs flowing through CI are written by coding agents (Claude Code, Codex CLI, etc.), not typed by hand. That changes what your eval gates are *for*. Two failure modes are now first-class CI concerns:

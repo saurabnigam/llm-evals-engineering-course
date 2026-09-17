@@ -50,7 +50,8 @@ Primary references for the changing API claims: [Claude model overview](https://
 
 | Model | ID | Context | Max output | Input / Output per MTok | Where it belongs in an eval stack |
 |---|---|---|---|---|---|
-| Claude Fable 5 | `claude-fable-5` | 1M | 128K | $10 / $50 | Ceiling-setting: hardest reference judgments, adversarial verification |
+| Claude Fable 5.1 | `claude-fable-5-1` | 1M | 128K | $10 / $50 (cache read $0.25) | Ceiling-setting; cheaper to replay long transcripts than Fable 5 because of the 0.025× cache-read rate ([pricing](https://platform.claude.com/docs/en/about-claude/pricing)) |
+| Claude Fable 5 | `claude-fable-5` | 1M | 128K | $10 / $50 | Ceiling-setting: hardest reference judgments, adversarial verification (legacy tier, still active) |
 | **Claude Opus 5** | **`claude-opus-5`** | **1M** | **128K** | **$5 / $25** | **Default judge and arbiter; agent-under-test for hard tasks** |
 | Claude Opus 4.8 | `claude-opus-4-8` | 1M | 128K | $5 / $25 | Fallback target on refusals; A/B baseline |
 | Claude Sonnet 5 | `claude-sonnet-5` | 1M | 128K | $2 / $10 | High-volume judging where κ against humans holds up |
@@ -64,6 +65,32 @@ Facts that change harness design, not just the model string:
 - **Prompt-cache minimum is 512 tokens** on Opus 5 (down from 1024 on Opus 4.8, and 4096 on Opus 4.6/Haiku 4.5). Judge prompts that were previously too short to cache now cache.
 - **Opus 5 has its own rate-limit bucket**, separate from the combined Opus 4.x pool. Moving an eval suite over does not inherit your old headroom.
 - **Safety classifiers can decline**, returning HTTP 200 with `stop_reason: "refusal"`. This has a specific and nasty consequence for evals — see §15.4.
+
+**September 2026 additions (Fable 5.1 / Mythos 5.1 and platform-wide), all per the [Claude Platform release notes](https://platform.claude.com/docs/en/release-notes/overview):**
+
+- **Fable 5.1 / Mythos 5.1 reject forced tool calls.** `tool_choice: {"type": "any"}` and `{"type": "tool", ...}` now return **HTTP 400** — only `auto` and `none` remain. Any harness that force-calls a grader or JSON-extraction tool on these models must migrate to [strict tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use) or [structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) (see below, and §15.4).
+- **Per-message `effort` (beta, header `mid-conversation-output-config-2026-07-01`).** `output_config.effort` can now change mid-conversation via a `role: "system"` message **without invalidating the prompt cache** — the pattern this enables is cheap-effort exploration turns followed by a single high-effort judge turn, in one cached session, instead of two separate calls.
+- **Thinking-block replay got stricter.** On accounts created after Aug 31, 2026, replaying a thinking block after the system prompt, tools, or earlier messages changed now returns a **400** instead of being silently accepted. This is a classic harness bug: mutating prompts between runs while reusing a cached thinking trace from a prior run.
+- **Messages API compaction (beta `compact-2026-09-04`).** A new *on-demand* request — separate from your conversation turns, so it can run in the background — returns a signed summary block covering everything you send it; swap that block in for those messages on your next call. Unlike the threshold-triggered compaction in §15.6, on-demand compaction summarizes the whole request you send it, not just an older portion — there is no automatic "keep the last N turns verbatim" split, so decide what to include before calling it.
+- **Computer/browser toolsets went GA Aug 19, 2026** as `computer_toolset_20260801` / `browser_toolset_20260801`, with breaking changes from the `computer_20251124` beta. A computer-use eval suite still pinned to the old tool schema needs updating before it will run.
+
+**Fable 5.1 forced-tool-call migration, before/after:**
+
+```python
+# Before (Fable 5, Opus 5, etc.) — 400 on Fable 5.1 / Mythos 5.1:
+resp = client.messages.create(
+    model="claude-fable-5-1", tools=[GRADER_TOOL],
+    tool_choice={"type": "tool", "name": "record_verdict"},   # ← 400 on 5.1
+    messages=[{"role": "user", "content": judge_prompt}],
+)
+
+# After — structured outputs, no forced tool call needed:
+resp = client.messages.create(
+    model="claude-fable-5-1",
+    output_config={"format": {"type": "json_schema", "schema": VERDICT_SCHEMA}},
+    messages=[{"role": "user", "content": judge_prompt}],
+)
+```
 
 ---
 
@@ -260,6 +287,14 @@ transport failures, `UNKNOWN` verdicts, and schema/API errors: valid JSON is
 not the same as a measured judgment. Two API notes: the first request with a
 new schema pays a one-time compilation cost (cached for 24 hours), and
 structured outputs are **incompatible with citations** (400).
+
+**Migration note for Fable 5.1 / Mythos 5.1.** If your schema-constrained judge
+instead forces the call with `tool_choice: {"type": "tool", ...}` (or
+`"any"`), that pattern now 400s on Fable 5.1 / Mythos 5.1 — see the
+before/after snippet in §15.1. Structured outputs (above) or [strict tool
+use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use)
+are the two supported replacements; there is no forced-tool-call path left on
+these models.
 
 ### Refusals: classify them from the estimand
 
@@ -487,6 +522,10 @@ That last row matters more than it looks. Under `fallbacks`, a response can be s
 | Effort defaults carried from a prior model | **Silent** | Re-sweep; `low`/`medium` are unusually strong on Opus 5 |
 | Fixed `max_tokens` on judges | **Silent** | Thinking shares the budget now |
 | Rate-limit assumptions | **Silent** | Opus 5 is a separate bucket from Opus 4.x |
+| `tool_choice: "any"` / `"tool"` (Fable 5.1 / Mythos 5.1 only) | **400** | Migrate the forced grader/JSON tool call to structured outputs or strict tool use (§15.1, §15.4) |
+| Replaying a cached thinking block after mutating the system prompt/tools/earlier messages (Fable 5.1 / Mythos 5.1, accounts created after Aug 31, 2026) | **400** | Don't reuse a cached thinking trace across a changed prompt — re-run rather than replay |
+| Cache-read cost model assumes 0.1× on Fable 5.1 / Mythos 5.1 | **Silent** | Actual rate is 0.025× ($0.25/MTok flat) — re-check any harness cost projection built before Sept 1, 2026 |
+| Harness has no way to cheapen exploration turns without a fresh call | **New capability, not a break** | Per-message `effort` (beta) lets a single cached session mix cheap-effort turns with a high-effort judge turn |
 
 **Verification after migration** — one call, three assertions:
 

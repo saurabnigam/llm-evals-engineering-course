@@ -115,6 +115,18 @@ No architecture is disclosed. That does not make the release uninformative — i
 
 > **The transferable habit:** when a lab tells you nothing about architecture, read *what they chose to measure*. A vendor's benchmark selection is a statement about what they think you will pay for.
 
+### GPT-6 Astra (Sept 3, 2026) — reading a release that crossed a framework threshold
+
+GPT-5.6 above told you about market positioning from a closed release. GPT-6 Astra is the other kind of closed-release signal worth learning to read: a published safety-framework threshold being crossed in public, with a documented paper trail.
+
+- **First model, any lab, rated Critical for cybersecurity** under a published preparedness/safety framework — not an incremental score bump, a new tier crossed. [openai.com/index/path-to-astra](https://openai.com/index/path-to-astra/)
+- **OpenAI paused its largest planned RL training run on August 18, 2026**, before the Critical classification was even confirmed, on preliminary evidence the model might cross that threshold. The mitigations that shipped with the eventual release: stricter isolation, checkpoint encryption, monitoring of full trajectories including chain-of-thought, and a blocking internal alignment-eval gate before employees could use the model at all. [openai.com/index/pacing-model-development-cyber-capabilities](https://openai.com/index/pacing-model-development-cyber-capabilities/)
+- **The system card itself reports a "substantial decrease in chain-of-thought monitorability compared to previous models."** Treat that sentence as the primary, citable finding. Secondary summaries attach an exact multiplier for how much more often Astra evades an adversarial CoT-control instruction than GPT-5.6 Sol; that multiplier is not independently confirmed here against the primary hub, so the honest version of this fact is directional, not numeric — evasion capability rose materially on an *adversarial* elicitation designed to find the ceiling, which is a different quantity from ordinary-use behavior. [deploymentsafety.openai.com/gpt-6-astra](https://deploymentsafety.openai.com/gpt-6-astra)
+- **Read it against the Artificial Analysis / Epoch AI disagreement on the same model** (Module 12 §12.3 has the fuller leaderboard-integrity writeup): Artificial Analysis initially scored Astra roughly level with GPT-5.6 Sol, while Epoch's independently run ECI ranked it #1 of 247 models — two reputable indices, one model, opposite verdicts, resolved by Artificial Analysis restructuring its index rather than by a re-run. The lesson repeats from §16.4 and §16.5 below: **read an index's composition before you read its rank.**
+- Two numbers from this window that are primary and safe to cite directly, not secondary-sourced: Astra scores **62.7%** on the ARC-AGI-3 public leaderboard, best of 12 evaluated models as of Sept 14, 2026 ([arcprize.org/leaderboard](https://arcprize.org/leaderboard)), and under FrontierMath Erdős's benchmark protocol it is the only model to solve any of the 68 open Erdős problems, at **2/68** ([epoch.ai](https://epoch.ai/latest/announcing-frontiermath-erdos)).
+
+> **What a builder takes from this:** a framework-threshold crossing is a data point worth logging in your own model-selection notes, independent of whether you ever touch cyber-offense capability. It tells you the lab believed its own pre-deployment eval enough to pause a training run already in progress. That is a stronger signal about how seriously to take a vendor's evals than any single benchmark score in this module.
+
 ---
 
 ## 16.3 What Actually Transfers to People Who Build on Models
@@ -183,7 +195,7 @@ Two rules that make this work:
 
 ## 16.5 Reading Benchmark Claims Without Being Had
 
-Everything in Module 12 (contamination) and Module 08 (case studies) applies to reading other people's numbers. Four questions, in order:
+Everything in Module 12 (contamination) and Module 08 (case studies) applies to reading other people's numbers. Seven questions, in order — the first four were already here; questions 5–7 are the September 2026 additions:
 
 1. **At what effort, on what harness?** "80 on the Coding Agent Index at maximum reasoning" is a fundamentally different claim from "80." A score is a function of (model, effort, scaffold, split) — Module 08 §6.
 2. **Who ran it, and on which split?** A vendor-run public-split result and an
@@ -197,6 +209,45 @@ Everything in Module 12 (contamination) and Module 08 (case studies) applies to 
    comparison, but it does not validate the reported wins by itself. Missing
    baselines, variance, cost, or failure slices should become follow-up
    questions rather than numerical guesses.
+5. **Is the delta above run-to-run noise?** Single-run pass rates for
+   coding agents move by several points between identical runs, so a one-run
+   comparison is not evidence — demand k runs and per-task deltas.
+   A companion generalizability-theory decomposition across three agent-trace
+   benchmarks found the "which agent you used" main effect explains **under 3%**
+   of total variance, while agent-by-task interaction explains **7–23%**
+   ([arXiv:2608.11323](https://arxiv.org/abs/2608.11323)) — most of what a
+   leaderboard reports as "agent quality" is noise plus task-specific
+   interaction, not a stable property of the agent. Demand *k* runs and a
+   per-task delta, not a single-run headline.
+6. **Is the suite saturated, or just at an instrument's ceiling?** Terminal-Bench
+   2.1's leaderboard had clustered in the high 70s/low 80s (Fable 5 highest
+   at 83.8%), with the maintainers themselves noting "leaderboard entries are
+   condensed into a narrow range" — before Terminal-Bench 3.0 dropped the
+   best score to roughly 34% ([tbench.ai](https://www.tbench.ai/news/terminal-bench-3-0));
+   METR's time-horizon page has not been updated since May 8, 2026 and states
+   its own instrument is unreliable above roughly 16 hours
+   ([metr.org/time-horizons](https://metr.org/time-horizons/)); GPQA Diamond was
+   dropped from the Artificial Analysis index as saturated; Anthropic's own
+   task-based AI-R&D suite saturated too, per its August 2026 Risk Report, which
+   replaced it with the harder 449-problem CoBench ([anthropic.com/aug-2026-risk-report](https://www.anthropic.com/aug-2026-risk-report)).
+   A flat score can mean the model stopped improving, or that the ruler ran out
+   of marks — Module 12 §12.5 has the fuller ledger.
+7. **Self-reported, vendor-harness, or independent?** CAISI's independent
+   evaluation of DeepSeek V4 Pro found it trailing the US frontier by roughly
+   eight months and scoring lower than DeepSeek's own self-reported numbers
+   ([nist.gov](https://www.nist.gov/news-events/news/2026/05/caisi-evaluation-deepseek-v4-pro));
+   Artificial Analysis and Epoch AI, both independent of OpenAI, scored GPT-6
+   Astra differently enough from each other to trigger an index redesign (§16.2
+   above). The identity of the measurer is not a formality — it changes the
+   number.
+
+One more direction worth holding alongside the six above: everything so far
+describes a benchmark inflating a score. A September 2026 paper on
+near-saturated physics benchmarks argues the reverse also happens — expert
+re-grading found closed-ended physics benchmarks understate real model
+competence ([arXiv:2609.13009](https://arxiv.org/abs/2609.13009)). A suspicious
+number can be suspiciously low as well as suspiciously high; don't assume the
+direction of the error before you've checked for it.
 
 ---
 
@@ -453,6 +504,15 @@ Pick a single ablation row from either open report. Design the smallest equivale
 - GPT-5.6 — [OpenAI release](https://openai.com/index/gpt-5-6/), [GPT-5.6 Sol preview](https://openai.com/index/previewing-gpt-5-6-sol/), and [official model catalog](https://developers.openai.com/api/docs/models)
 - ExploitGym incident — **primary organizational accounts:** [OpenAI, *OpenAI and Hugging Face partner to address security incident during model evaluation*](https://openai.com/index/hugging-face-model-evaluation-security-incident/) (eval configuration, Artifactory escape, model set, and preliminary findings); [Hugging Face, *Security incident disclosure — July 2026*](https://huggingface.co/blog/security-incident-july-2026) (detection, impact, and remediation); and Hugging Face's later [technical timeline](https://huggingface.co/blog/agent-intrusion-technical-timeline) (reconstructed actions and attack chain). Each organization labels parts of the agent's objective as an inference, and OpenAI says its investigation/third-party assessment is ongoing.
 - Kimi K3 release context — [VentureBeat](https://venturebeat.com/technology/chinas-moonshot-ai-releases-kimi-k3-the-largest-open-source-model-ever-rivaling-top-u-s-systems)
+- GPT-6 Astra — [Path to Astra](https://openai.com/index/path-to-astra/), [pacing announcement](https://openai.com/index/pacing-model-development-cyber-capabilities/), [Deployment Safety Hub / system card](https://deploymentsafety.openai.com/gpt-6-astra)
+- ARC-AGI-3 leaderboard — [arcprize.org/leaderboard](https://arcprize.org/leaderboard)
+- FrontierMath Erdős — [epoch.ai](https://epoch.ai/latest/announcing-frontiermath-erdos)
+- Terminal-Bench 3.0 — [tbench.ai](https://www.tbench.ai/news/terminal-bench-3-0)
+- METR time horizons — [metr.org/time-horizons](https://metr.org/time-horizons/)
+- Anthropic August 2026 Risk Report — [anthropic.com/aug-2026-risk-report](https://www.anthropic.com/aug-2026-risk-report)
+- CAISI independent evaluation of DeepSeek V4 Pro — [nist.gov](https://www.nist.gov/news-events/news/2026/05/caisi-evaluation-deepseek-v4-pro)
+- Run-to-run reliability — [arXiv:2608.11323](https://arxiv.org/abs/2608.11323) (generalizability-theory sizing, verified: agent main effect <3%, agent×task interaction 7–23%)
+- Benchmarks that understate competence — [arXiv:2609.13009](https://arxiv.org/abs/2609.13009)
 
 > **Note on sourcing:** architecture claims here are taken from the papers' own
 > reports. Vendor performance claims are labeled as vendor claims. The

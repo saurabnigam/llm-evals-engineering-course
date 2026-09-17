@@ -4,8 +4,11 @@
 >
 > A practical guide for software engineers and aspiring AI researchers learning
 > to build decision-oriented evaluation systems for LLMs, RAG systems, and AI
-> agents. Updated **August 2026** with current API behavior, recent model
-> reports, and evaluation practice from primary research and evaluation groups.
+> agents. Updated **September 2026** for the Claude Fable 5.1 / GPT-6 Astra
+> release wave — benchmark saturation and leaderboard churn, and new
+> eval-science on chain-of-thought monitorability and judge reliability —
+> with current API behavior, recent model reports, and evaluation practice
+> from primary research and evaluation groups.
 >
 > **Companion reading:** Hamel Husain's ["Your AI Product Needs Evals"](https://hamel.dev/blog/posts/evals/) and Eugene Yan's ["Evaluating LLM-Evaluators"](https://eugeneyan.com/writing/llm-evaluators/) are useful practitioner introductions to read alongside this guide.
 
@@ -76,6 +79,23 @@ fit the existing chapters, so adding another chapter would duplicate material
 rather than close a learner gap.
 
 ---
+
+## What's New in the September 2026 Edition
+
+This revision tracks the Claude Fable 5.1 / GPT-6 Astra release wave
+(Sept 1–3, 2026), the benchmark suites that saturated or got reworked in
+response, and new eval-science on judge validity and chain-of-thought
+monitorability:
+
+- **[Module 05](./05-scaling/) & [Module 15](./15-opus5-eval-techniques/) (pricing and API changes)**: Module 05 adds Claude Fable 5.1 pricing (`claude-fable-5-1`, $10/$50, with cache reads at a 0.025× rate instead of the standard 0.1×) and confirms Sonnet 5's $2/$10 pricing is now permanent — the scheduled Sept 1 increase to $3/$15 was cancelled. Module 15 covers five API changes that break existing harnesses: Fable 5.1/Mythos 5.1 reject forced tool calls (`tool_choice: "any"`/`"tool"` now return HTTP 400 — migrate to strict tool use or structured outputs), per-message `effort` (beta), stricter thinking-block replay rules on newer accounts, Messages API compaction (beta), and the now-GA computer/browser toolsets.
+- **[Module 08](./08-case-studies/) (Case Study 7 addendum)**: a new "what a point release re-evaluates" addendum covers the Fable 5.1 / Mythos 5.1 system card — which safety thresholds were re-confirmed versus newly assessed-but-not-triggered, the changed third-party evaluator roster, and a checklist for reading a point-release card.
+- **[Module 10](./10-advanced-topics/) (alignment evals and evaluators)**: adds GPT-6 Astra as the first model rated Critical for cybersecurity under a published framework, the UK AISI external evaluation of Astra's monitorability, and updates to the red-team and third-party evaluator tables (Meridian Labs' Petri 3.0, CAISI, UK AISI).
+- **[Module 11](./11-how-frontier-models-are-trained/) (training pipeline)**: covers OpenAI's Aug 18, 2026 pause of its largest planned RL run on GPT-6 Astra pending safety mitigations, DeepMind's Frontier Safety Framework v3.1, and CAISI's independent evaluation of DeepSeek V4 Pro as a self-report-vs-independent-measurement case study.
+- **[Module 12](./12-eval-training-separation/) (saturation and leaderboard integrity)**: a September 2026 saturation ledger (Terminal-Bench 3.0, FrontierMath Erdős, ARC-AGI-3, GPQA Diamond dropped from the Artificial Analysis index) plus a new section on the Artificial Analysis index's v4.2/v4.3 overhaul after it and Epoch's ECI ranked GPT-6 Astra very differently.
+- **[Module 13](./13-advancing-ai-research/) (research frontier)**: Anthropic's RSP v3.4, Petri's donation to Meridian Labs, and a 12-paper "Autumn 2026" reading list on eval-awareness, sandbagging, and chain-of-thought monitor reliability.
+- **[Module 16](./16-frontier-architectures-and-research-thinking/) (reading the frontier)**: a new GPT-6 Astra reading case, and "Reading Benchmark Claims Without Being Had" extended from four questions to seven — run-to-run noise, saturation vs. instrument ceilings, and self-reported vs. independent measurement.
+- **[Module 02](./02-evaluation-methods/) (judge and agent-eval science)**: two 2026 findings that change how you validate a judge (rubric-artifact leakage; reliability is not validity), plus Senior SWE-Bench's layered grading, MemoryArena, and Agents' Last Exam as agent-eval references.
+- **[Module 03](./03-pipeline-architecture/), [Module 06](./06-feedback-loops/), [Module 07](./07-cicd-integration/) & [Module 09](./09-langchain-examples/) (tooling sweep)**: the OpenAI Evals platform's sunset (read-only Oct 31, 2026; shut down Nov 30), Google's Agent + Model Evaluations GA, Langfuse's stable evaluator API, Arize Phoenix's session-level PII evaluator, and Claude Code's `claude plugin eval` are threaded through the pipeline, feedback-loop, CI/CD, and LangChain-example modules, each of which also flags the Fable 5.1 forced-tool-call break where it applies to an existing example.
 
 ## What's New in the August 2026 Edition
 
@@ -245,7 +265,7 @@ Week 3: Module 13 (Research Frontier + Project Planning)
 This guide uses:
 - **Python 3.11+**
 - **LangChain / LangGraph** for LLM and agent orchestration
-- **Anthropic API** (Claude Fable 5, Opus 5, Sonnet 5, and Haiku 4.5) and **OpenAI API** (GPT-5.6 Sol/Terra/Luna plus pinned smaller models). Reasoning defaults, effort levels, and sampling-parameter support differ by provider and model; record the exact configuration and check current docs (see Module 15)
+- **Anthropic API** (Claude Fable 5.1 `claude-fable-5-1`, Fable 5, Opus 5, Sonnet 5, and Haiku 4.5 — Sonnet 5's $2/$10 pricing is standard, not introductory) and **OpenAI API** (GPT-6 Astra `gpt-6-astra`, GPT-5.6 Sol/Terra/Luna, plus pinned smaller models). Reasoning defaults, effort levels, and sampling-parameter support differ by provider and model; record the exact configuration and check current docs (see Module 15)
 - **Pydantic** for data validation and structured outputs
 - **Redis/Celery** for distributed processing
 - **GitHub Actions** for CI/CD
@@ -255,12 +275,12 @@ This guide uses:
 
 | Category | Tools |
 |----------|-------|
-| **Eval frameworks** | [Inspect AI](https://inspect.aisi.org.uk/) (UK AISI — agent-first, sandboxed, 200+ benchmarks), [OpenAI Evals](https://github.com/openai/evals), [Promptfoo](https://www.promptfoo.dev/), [DeepEval](https://github.com/confident-ai/deepeval) |
-| **Hosted eval + tracing** | [LangSmith](https://docs.langchain.com/langsmith/evaluation), [Braintrust](https://www.braintrust.dev/), [Arize Phoenix](https://phoenix.arize.com/), [Weights & Biases Weave](https://wandb.ai/site/weave), [Langfuse](https://langfuse.com/), [Helicone](https://www.helicone.ai/) |
+| **Eval frameworks** | [Inspect AI](https://inspect.aisi.org.uk/) (UK AISI — agent-first, sandboxed, 200+ benchmarks), [OpenAI Evals](https://github.com/openai/evals) (hosted platform [sunsetting](https://developers.openai.com/api/docs/deprecations): read-only Oct 31, 2026, shut down Nov 30, 2026 — OpenAI points early-stage users to Datasets, durable path is Promptfoo), [Promptfoo](https://www.promptfoo.dev/), [DeepEval](https://github.com/confident-ai/deepeval), [Google Agent + Model Evaluations](https://developers.googleblog.com/agent-and-model-evaluations-in-gemini-enterprise-agent-platform-are-now-ga/) (GA Jul 31, 2026 — Gemini Enterprise Agent Platform), Claude Code [`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) (Sept 2026 — proposes cases/graders, runs each 3x with and 3x without the plugin) |
+| **Hosted eval + tracing** | [LangSmith](https://docs.langchain.com/langsmith/evaluation), [Braintrust](https://www.braintrust.dev/), [Arize Phoenix](https://phoenix.arize.com/) (evals 3.6.0, Aug 28 2026, adds a session-level PII evaluator), [Weights & Biases Weave](https://wandb.ai/site/weave), [Langfuse](https://langfuse.com/) ([stable evaluator API](https://langfuse.com/changelog/2026-08-27-stable-evaluator-api), Aug 2026 — old endpoints migrate by Nov 16, 2026), [Helicone](https://www.helicone.ai/) |
 | **RAG-specific** | [RAGAS](https://docs.ragas.io/), [TruLens](https://www.trulens.org/), [DeepEval RAG metrics](https://github.com/confident-ai/deepeval) |
 | **Tracing standards** | [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), [OpenLLMetry / Traceloop](https://github.com/traceloop/openllmetry) |
 | **Safety / red-team** | [Inspect Evals safety suite](https://inspect.aisi.org.uk/evals/), [Garak](https://github.com/NVIDIA/garak), [PyRIT](https://github.com/Azure/PyRIT), Anthropic's [SHADE-Arena](https://alignment.anthropic.com/2025/strengthening-red-teams/) |
-| **Public leaderboards** | [Arena (formerly LMArena/LMSYS)](https://lmarena.ai/) — note "The Leaderboard Illusion" critique; [Epoch AI Benchmarking Hub + Capabilities Index (ECI)](https://epoch.ai/benchmarks/eci); [Artificial Analysis Intelligence Index v4](https://artificialanalysis.ai/methodology/intelligence-benchmarking); [SEAL / SEAL Showdown (Scale)](https://scale.com/leaderboard); [Terminal-Bench](https://www.tbench.ai/leaderboard/terminal-bench/2.0), [LiveBench](https://livebench.ai/), [SWE-bench Verified/Pro](https://www.swebench.com/) |
+| **Public leaderboards** | [Arena (formerly LMArena/LMSYS)](https://lmarena.ai/) — note "The Leaderboard Illusion" critique; [Epoch AI Benchmarking Hub + Capabilities Index (ECI)](https://epoch.ai/benchmarks/eci); [Artificial Analysis Intelligence Index](https://artificialanalysis.ai/methodology/intelligence-benchmarking) (recomposed twice in Sept 2026 — v4.2 then v4.3 — after AA and Epoch's ECI ranked GPT-6 Astra very differently; see [Module 12](./12-eval-training-separation/)); [SEAL / SEAL Showdown (Scale)](https://scale.com/leaderboard); [Terminal-Bench 3.0](https://www.tbench.ai/news/terminal-bench-3-0) (Aug 24, 2026 — replaces the saturated 2.1 suite), [LiveBench](https://livebench.ai/), [SWE-bench Verified/Pro](https://www.swebench.com/), [ARC-AGI-3 leaderboard](https://arcprize.org/leaderboard), [FrontierMath Erdős](https://epoch.ai/latest/announcing-frontiermath-erdos), [Agents' Last Exam](https://agents-last-exam.org/) |
 
 ---
 
@@ -409,8 +429,11 @@ This is a living document. Suggestions welcome!
 
 ### System Cards & Transparency Reports (primary sources for this edition)
 - [Claude Fable 5 / Mythos 5 System Card (June 2026, 319 pp)](https://www.anthropic.com/claude-fable-5-mythos-5-system-card) — the flagship case study in Module 08; capability + RSP/ASL-3 + ~120 pp alignment assessment
+- [Claude Fable 5.1 / Mythos 5.1 launch & system card (Sept 1, 2026, 212 pp)](https://www.anthropic.com/claude-fable-and-mythos-5-1) — same underlying weights as Fable 5/Mythos 5 under two safeguard configurations; addendum in Module 08
 - [Claude Opus 4.8 announcement (May 2026)](https://www.anthropic.com/news/claude-opus-4-8) and [Claude Sonnet 4.6 announcement (Feb 2026)](https://www.anthropic.com/news/claude-sonnet-4-6) — each links to its system card
-- [Anthropic Responsible Scaling Policy](https://www.anthropic.com/responsible-scaling-policy) and [OpenAI Preparedness Framework v2](https://cdn.openai.com/pdf/18a02b5d-6b67-4cec-ab64-68cdfbddebcd/preparedness-framework-v2.pdf)
+- [GPT-6 Astra Deployment Safety Hub](https://deploymentsafety.openai.com/gpt-6-astra), [Path to Astra](https://openai.com/index/path-to-astra/), and [Pacing model development on cyber capabilities](https://openai.com/index/pacing-model-development-cyber-capabilities/) — OpenAI; first model rated Critical for cybersecurity under a published framework
+- [Anthropic Responsible Scaling Policy](https://www.anthropic.com/responsible-scaling-policy) (v3.4 effective Jul 8, 2026 — see the version history on that page; the separate [updates hub](https://www.anthropic.com/responsible-scaling-policy/updates) tracks policy changes) and [OpenAI Preparedness Framework v2](https://cdn.openai.com/pdf/18a02b5d-6b67-4cec-ab64-68cdfbddebcd/preparedness-framework-v2.pdf)
+- [Anthropic August 2026 Risk Report](https://www.anthropic.com/aug-2026-risk-report) and [DeepMind Frontier Safety Framework v3.1](https://deepmind.google/blog/strengthening-our-frontier-safety-framework/) (Apr 17, 2026 — Tracked Capability Levels, Security Level 2+)
 - [Anthropic FMTI Transparency Report (December 2025)](https://crfm.stanford.edu/fmti/December-2025/company-reports/Anthropic_FinalReport_FMTI2025.html)
 
 ### Frontier model evaluation (2025–2026)
@@ -418,8 +441,10 @@ This is a living document. Suggestions welcome!
 - [GDPval](https://openai.com/index/gdpval/) and [HealthBench](https://cdn.openai.com/pdf/bd7a39d5-9e9f-47b3-903c-8b847ca650c7/healthbench_paper.pdf) — OpenAI; rubric-based and economically-grounded evals
 - [METR time horizons](https://metr.org/time-horizons/) — the "AGI progress" task-length metric used for autonomy assessment
 - [Petri: open-source automated auditing](https://www.anthropic.com/research/petri-open-source-auditing) (now maintained by Meridian Labs) and [Inspect AI / ControlArena](https://inspect.aisi.org.uk/) — UK AISI
+- [Petri 3.0](https://meridianlabs.ai/blog/posts/introducing-petri-3/) — Meridian Labs; auditor/target split, "Dish" realism harness, "Bloom" single-behavior suite generator, following Anthropic's [donation of Petri](https://www.anthropic.com/research/donating-open-source-petri) (May 7, 2026)
 - [Natural Emergent Misalignment from Reward Hacking](https://arxiv.org/abs/2511.18397) — Anthropic (Nov 2025); [Chain-of-thought monitoring](https://openai.com/index/chain-of-thought-monitoring/) — OpenAI
 - [The SWE-Bench Illusion](https://arxiv.org/abs/2506.12286) and ["environments are the new datasets"](https://www.primeintellect.ai/blog/environments) — Prime Intellect
+- [Terminal-Bench 3.0](https://www.tbench.ai/news/terminal-bench-3-0) (Aug 24, 2026), [FrontierMath Erdős](https://epoch.ai/latest/announcing-frontiermath-erdos) (Sept 1, 2026, 68 Lean-formalized open Erdős problems), and [Agents' Last Exam](https://agents-last-exam.org/) (rolling refresh with private-task rotation) — the September 2026 saturation-resistant benchmark generation, detailed in Module 12
 
 ---
 

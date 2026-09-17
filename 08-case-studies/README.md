@@ -1251,6 +1251,29 @@ The card spends a full section asking whether its own results can be believed:
 5. **Diversity and externality buy credibility**: cross-lab judges, named third parties, and paid public adversaries.
 6. **Disclose the harness.** Effort setting, trial count, context limit, scaffold — a score without them is not reproducible.
 
+### Addendum (September 2026): what a point release re-evaluates — Fable 5.1 / Mythos 5.1
+
+**The release.** Claude Fable 5.1 and Mythos 5.1 shipped 2026-09-01 as `claude-fable-5-1` — the same underlying weights as Fable 5 / Mythos 5 above, carried through a new pair of safeguard configurations rather than a new capability tier. One 212-page system card covers both ([launch post](https://www.anthropic.com/claude-fable-and-mythos-5-1), [system card PDF](https://www-cdn.anthropic.com/0339e6a7c5c7b87f5c07798616dc32c215d14235/Claude%20Fable%205.1%20&%20Claude%20Mythos%205.1%20System%20Card.pdf)). Price is unchanged at $10/$50 per million input/output tokens ([pricing](https://platform.claude.com/docs/en/about-claude/pricing)); cache reads dropped 75%, to $0.25/MTok (0.025× input, vs the standard 0.1×) — a change that moves the economics of replay-heavy harnesses more than it moves the model's capability.
+
+**What a point release actually re-evaluates.** Nothing in the training pipeline changed, so Layer 1 (capability) and Layer 3 (alignment methodology) are mostly a restatement. What the card re-runs is Layer 2 — the RSP threshold decisions — and the interesting result is which threshold got a harder look this time:
+
+- CB-1 (bio/chem uplift) reconfirmed, as with Fable 5.
+- **CB-2 explicitly assessed and not triggered** — new relative to Fable 5, which only had the CB-1 call. The card's stated rationale is not one clean line but a list of disqualifying weaknesses: weak open-ended ideation, poor strategic judgment, unreliable representation of literature findings, and poor technical calibration — summed up in the card as "a tendency to make mistakes that require significant expertise to catch," which the card judges as still short of what would let the model functionally substitute for scarce bio/chem expertise.
+- Autonomy-1 confirmed, Autonomy-2 not triggered.
+
+This sharpens the Case Study 7 lesson above: a point release doesn't re-run the benchmark suite to see if a number moved — it re-runs the *decision*, and the artifact worth reading is which thresholds moved from "not assessed" to "assessed and cleared," not the benchmark deltas.
+
+**Third-party roster changed too.** METR ran three named evals this cycle — Sunlight, Budget NanoGPT Speedrun, and Language Model Conceptual Argumentation — and reported the model strongest on tasks with continuous, objective feedback signals. Two new red-team vendors appear alongside Gray Swan: Trajectory Labs and 10a Labs. Directionally, all three reported low yield against the model, but the underlying hour and prompt counts come from a secondary summary of the card rather than the primary PDF table, so treat them as qualitative — not a number to reuse in your own materials. METR's public time-horizon page had not been updated with a Fable 5.1 figure as of Sept 17, 2026 ([metr.org/time-horizons](https://metr.org/time-horizons/)) — a reminder that "external validation" runs on the external party's schedule, not the lab's release date.
+
+**UK AISI.** The Financial Times reported (Sept 10, 2026) that Anthropic did not give the UK AI Security Institute pre-release access to Mythos 5.1; Anthropic had not commented publicly at the time of the report ([FT via TheNextWeb](https://thenextweb.com/news/anthropic-mythos-5-1-uk-aisi-pre-release-testing-withheld)).
+
+**Benchmark exhaustion, and what labs do about it.** The system card reports its own cyber harm-coverage evaluation as saturated — classifiers now flag essentially all of the held-out harmful set, so the suite no longer discriminates capability, the same pattern Layer 2 already showed for the autonomy rule-out evals on Fable 5. Separately, and outside this card entirely, Anthropic's August 2026 Risk Report discloses that the *older* task-based AI R&D eval suite it has reported in past system cards has reached the same state — frontier models now surpass the human baseline on most of its tasks. The report's response is the instructive part: rather than keep publishing a saturated number, Anthropic built CoBench, a harder 449-problem internal benchmark drawn from real Anthropic engineering incidents. On CoBench itself, current models score well ahead of other recent models but still fall short of the bar for fully substituting for Anthropic's research engineers ([Anthropic risk report](https://www.anthropic.com/aug-2026-risk-report)) — so CoBench is the *replacement* for a saturated eval, not a second eval that has itself saturated. Two evals hitting their ceiling within months of each other is still the pattern worth naming — see Module 12 §12.5 on benchmark saturation and Module 14 §14.4 on what that does to a loop-engineering dashboard once your pass-rate metric stops moving — but the correct reading of this specific pair is "saturated eval retired, harder eval takes its place," not "two benchmarks saturated at once."
+
+**How to read a point-release card — a 3-item checklist:**
+1. **Find what's unchanged before you read what's new.** If the weights didn't change, Layers 1 and 3 are mostly a restatement — spend your time on Layer 2 and the external-validation roster instead.
+2. **Look for a threshold that moved from "not assessed" to "assessed and cleared,"** not for a benchmark score that moved a few points. That is the actual news in a point release.
+3. **Check who's missing from the external-validation list this time**, not just who's new — an absence (UK AISI here) is as reportable as an addition.
+
 ---
 
 ## Case Study 8: GDPval — Grading Real Economic Work Without Unit Tests

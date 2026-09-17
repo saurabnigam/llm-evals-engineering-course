@@ -83,15 +83,24 @@ Per-call costs are *derived*, not quoted — always compute them from per-millio
 | `claude-sonnet-5` | $2.00 | $10.00 | High-volume judge candidate; calibrate against human labels |
 | `claude-opus-5` | $5.00 | $25.00 | Default arbiter / final-tier judge — same price as Opus 4.8 |
 | `claude-opus-4-8` | $5.00 | $25.00 | Prior-generation arbiter; useful as an A/B baseline and refusal fallback |
+| `claude-fable-5-1` | $10.00 | $50.00 | Frontier capability evals; cache reads at $0.25/MTok (0.025× — vs the standard 0.1×) change the economics of replay-heavy long-context harnesses |
 | `claude-fable-5` | $10.00 | $50.00 | Capability evals — almost never a judge |
 
-Prices verified August 2026 against the [Claude pricing docs](https://platform.claude.com/docs/en/about-claude/pricing); always re-check, as prices change. Opus 4.8 fast mode is **$10/$50** — double the standard $5/$25 for the *same* model, so the speed knob is a cost lever, not just a latency one ([launch post](https://www.anthropic.com/news/claude-opus-4-8)). Two more cost gotchas from the same docs: (1) **tokenizer drift** — Opus 4.7+, Fable/Mythos 5, and Sonnet 5 use a newer tokenizer that produces **~30% more tokens for the same text**, so per-call costs don't scale down from older models the way the list price suggests; (2) **Batch API is a flat 50% off** input and output for every model. Worked example: a Sonnet 4.6 judge call at 2,000 input + 250 output tokens costs 2,000 × $3/1M + 250 × $15/1M ≈ **$0.0098**.
+Prices verified September 17, 2026 against the [Claude pricing docs](https://platform.claude.com/docs/en/about-claude/pricing); always re-check, as prices change. **Update, Sept 17, 2026:** Sonnet 5's $2/$10 rate — originally announced as introductory pricing through August 31, 2026 — is now **permanent**. Anthropic's pricing page states the scheduled September 1, 2026 increase to $3/$15 "will not occur," so stop budgeting for it ([pricing docs](https://platform.claude.com/docs/en/about-claude/pricing)). Opus 5 and Opus 4.8 fast mode are both **$10/$50** — double the standard $5/$25 for the *same* model, Claude API only, not Batch — so the speed knob is a cost lever, not just a latency one; Opus 4.7 fast mode has since been **removed** — passing `speed: "fast"` on 4.7 now errors, so a harness that pinned fast mode to 4.7 will break on upgrade ([pricing docs](https://platform.claude.com/docs/en/about-claude/pricing)). Two more cost gotchas from the same docs: (1) **tokenizer drift** — Opus 4.7+ and Sonnet 5 use a newer tokenizer that produces **~30% more tokens for the same text** (Anthropic's pricing page names it for "Claude 4.7 and later models and Claude Mythos Preview"; Fable 5/5.1 and Mythos 5/5.1 aren't individually named in that footnote — as newer releases they're very likely on it too, but verify before hard-coding a multiplier for them), so per-call costs don't scale down from older models the way the list price suggests; (2) **Batch API is a flat 50% off** input and output for every model. Worked example: a Sonnet 4.6 judge call at 2,000 input + 250 output tokens costs 2,000 × $3/1M + 250 × $15/1M ≈ **$0.0098**.
+
+**Retirement heads-up:** Opus 4.1 was retired Aug 5, 2026 on Anthropic's own platforms (Claude API, Claude Platform on AWS, Microsoft Foundry) — replaced by Opus 4.8; Bedrock and Google Cloud set their own retirement schedules, so a Bedrock-pinned harness may not be affected yet. Opus 4.8 and Sonnet 4.6 are "Active" in Anthropic's deprecation-lifecycle terms but are labeled "Legacy" on the [models overview](https://platform.claude.com/docs/en/models/overview) page — Anthropic recommends migrating to Opus 5 / Sonnet 5 — with earliest retirement dates of May 28, 2027 and Feb 17, 2027 respectively ([model deprecations](https://platform.claude.com/docs/en/about-claude/model-deprecations)). Pinning either in a harness today is safe, but date-bounded — put the retirement date in your upgrade backlog now.
+
+**If your harness also uses OpenAI models as judges:** GPT-6 Astra (`gpt-6-astra`, OpenAI's flagship since Sept 3, 2026) prices at $10/$50 per MTok (cached input $1/MTok); GPT-5.6 Sol (`gpt-5.6-sol`) prices at $4/$20, but the pricing page marks that rate "promotional... through November 21, 2026" — the post-promo price was not published as of Sept 17, 2026, so don't bake $4/$20 into a cost model that runs past that date ([OpenAI pricing](https://developers.openai.com/api/docs/pricing)).
 
 #### The prompt-cache minimum: a silent 90% discount you can miss entirely
 
 Prompt caching can be a large lever when a judge re-sends a long, stable rubric
 on every call: cache reads bill at roughly **0.1×** input price on the models
-listed below. A cached prefix must clear a **minimum token count**, and below it
+listed below — with one exception: Fable 5.1 and Mythos 5.1 cache reads bill at
+a flat **$0.25/MTok (0.025×)**, a 75% cut from Fable 5's $1/MTok cache-read rate,
+which meaningfully changes the economics of a harness that replays a long
+transcript on every grading pass ([pricing docs](https://platform.claude.com/docs/en/about-claude/pricing)).
+A cached prefix must clear a **minimum token count**, and below it
 nothing caches: no error, no warning, just
 `cache_creation_input_tokens: 0` and a full-price bill.
 

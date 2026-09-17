@@ -104,6 +104,8 @@ class EvalConfig(BaseSettings):
 config = EvalConfig()
 ```
 
+**Model id currency (Sept 2026):** `gpt-5.5` above is still an active, priced OpenAI model — fine to keep as the judge default, and the same is true of `gpt-5.4-mini` used later in this module. If you want OpenAI's current flagship instead, that's `gpt-6-astra` ($10/$50 per MTok), with `gpt-5.6-sol` as the mid-tier successor to the 5.x line ($4/$20 per MTok, promotional through Nov 21, 2026) ([OpenAI pricing](https://developers.openai.com/api/docs/pricing)).
+
 ---
 
 ## 9.2 Building Evaluators with LangChain
@@ -661,6 +663,8 @@ The implementation below replaces that pattern with three separate artifacts:
 
 Two upgrades over the LangChain example above: (1) grade the **outcome** (the actual end-state) with a deterministic check first, falling back to an LLM judge only for ambiguous cases; and (2) run **k trials per task** and report **pass^k** (all k succeed), because a deployed agent has to work *every* time, not just once. A 90%-per-trial agent is only ~59% reliable at pass^5 (0.9⁵). This example calls the Anthropic SDK directly — no LangChain wrapper — which is what you reach for when you want full control over the loop and tool schema.
 
+> **Fable 5.1 tool_choice note (Sept 2026):** Claude Fable 5.1 / Mythos 5.1 reject forced tool calls — `tool_choice: "any"` and `"tool"` now return HTTP 400; only `auto`/`none` remain. The `messages.create()` call below doesn't pass `tool_choice` at all, so it defaults to `auto` and is unaffected. If you've forced a grader/JSON tool call elsewhere with `tool_choice`, migrate to [strict tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use) or [structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) ([release notes](https://platform.claude.com/docs/en/release-notes/overview)).
+
 ```python
 # evals/agent_outcome_eval.py
 # pip install anthropic
@@ -1079,7 +1083,7 @@ LangChain/LangSmith is one of several mature options. For new projects in 2026, 
 | RAG and agent metric library | **[RAGAS](https://docs.ragas.io/)** | Faithfulness, context precision/recall, agent goal accuracy, KG-based testset gen |
 | Pytest-style assertions for LLM outputs | **[DeepEval](https://github.com/confident-ai/deepeval)** | Drops into existing pytest CI |
 | YAML-first prompt A/B testing | **[Promptfoo](https://www.promptfoo.dev/)** | No-code config, fastest path to a comparison report |
-| Reference framework, model registry | **[OpenAI Evals](https://github.com/openai/evals)** | The original eval registry, still maintained |
+| Reference framework, model registry | **[OpenAI Evals](https://github.com/openai/evals)** | The original open-source eval registry (GitHub), still maintained — distinct from OpenAI's *hosted* Evals platform, which goes read-only Oct 31, 2026 and shuts down Nov 30, 2026 ([deprecations](https://developers.openai.com/api/docs/deprecations)) |
 | Adversarial / red-team probes | **[Garak](https://github.com/NVIDIA/garak)** (NVIDIA), **[PyRIT](https://github.com/Azure/PyRIT)** (Microsoft) | Prebuilt jailbreak / prompt-injection probes |
 
 You will almost always end up with **two of these in production**: one for offline / CI evals (Inspect AI or Braintrust), and one for online tracing + drift monitoring (Phoenix, Langfuse, or LangSmith). Wire both to OpenTelemetry GenAI traces so you can swap either side without re-instrumenting.

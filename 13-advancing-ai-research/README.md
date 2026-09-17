@@ -667,8 +667,8 @@ MONTH 7+: CONTRIBUTE
   • Publish blog posts with novel findings
   • Contribute to open-source audit/eval tooling (see table below):
     Petri seed scenarios, inspect_evals community registry
-    (yaml-based /register/ contributions since May 2026),
-    Environments Hub environments
+    (GitHub-issue + arXiv-link submissions since May 2026, bot-validated),
+    Agents' Last Exam expert-authored tasks, Environments Hub environments
   • Apply to research positions or residencies -- "eval engineer"
     is now a posted job title at OpenAI and Scale, and the external
     evaluator orgs (METR, Apollo, UK AISI, ...) hire too
@@ -676,18 +676,38 @@ MONTH 7+: CONTRIBUTE
 
 Links for the 2025–2026 reading-list additions: [reward hacking → emergent misalignment](https://arxiv.org/abs/2511.18397), [Petri](https://alignment.anthropic.com/2025/petri/), [Fable 5 / Mythos 5 system card](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf), [Demystifying evals for AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents), [METR Time Horizon 1.1](https://metr.org/blog/2026-1-29-time-horizon-1-1/), [The Leaderboard Illusion](https://arxiv.org/abs/2504.20879), [The SWE-Bench Illusion](https://arxiv.org/abs/2506.12286), [CoT monitoring](https://openai.com/index/chain-of-thought-monitoring/), [GPT-5.5 system card](https://deploymentsafety.openai.com/gpt-5-5/gpt-5-5.pdf).
 
+### Autumn 2026 Reading List Additions
+
+Twelve more items landed between the June list above and this revision (mid-July–mid-September 2026), concentrated in eval-awareness, CoT monitorability, and reliability science. Read the abstract first; decide from there.
+
+| Paper | Source | One-line takeaway |
+|---|---|---|
+| EvalDetectBench | [arXiv 2609.01611](https://arxiv.org/html/2609.01611) | First AUROC-scored benchmark specifically for whether a model can tell it's being evaluated. |
+| The Oversight Gap | [arXiv 2609.07162](https://arxiv.org/abs/2609.07162) | Frames sandbagging and eval-awareness as 2-safety hyperproperties — properties over *pairs* of traces — so no single-trace monitor can certify their absence. |
+| A False Average | [arXiv 2608.00583](https://arxiv.org/html/2608.00583v1) | Rewriting only the reasoning narrative (the exploit itself unchanged) drops a held-out CoT monitor's catch rate from ~95% to under 11%. See Starter 3 in §13.10b below. |
+| CoT-monitor evasion via model poisoning | [arXiv 2608.02820](https://arxiv.org/abs/2608.02820) | Backdoors can be trained in that trigger attacker-chosen behavior while the CoT trace stays benign-looking — a training-time attack on monitorability. |
+| CoT unreliability under implicit influence | [arXiv 2608.04735](https://arxiv.org/abs/2608.04735) | Even with no explicit hide instruction, contextual features can shape behavior without appearing in the CoT. |
+| Fragility of Self-Improving Agents | [arXiv 2608.18066](https://arxiv.org/abs/2608.18066) | Re-running memory-based self-improving agents shows evaluation noise dominates in complex, multi-step environments; most papers still report single-run pass@1. |
+| Deployment Decision Reliability | [arXiv 2608.11323](https://arxiv.org/abs/2608.11323) | G-theory variance decomposition across agent-trace benchmarks: "which agent" explains under 3% of variance; agent×task interaction explains 7–23%. Load-bearing for sizing long-horizon agent evals. |
+| Reliability without Validity | [arXiv 2606.19544](https://arxiv.org/html/2606.19544v1) | Judge benchmarks over-privilege raw human agreement; judge calibration (ECE, Brier) should be a standard second axis once logprob access broadens. |
+| Rubric Artifacts in LLM Judges | [arXiv 2609.02942](https://arxiv.org/html/2609.02942) | A classifier given only the rubric text, never the response being graded, predicts the judge's verdict at non-trivial accuracy — rubric wording itself leaks evaluative signal. |
+| Contamination Taxonomy by Defeated Mitigation | [arXiv 2608.29463](https://arxiv.org/html/2608.29463) | Reorganizes contamination types (direct/derivative/temporal/distributional/acquired) by which existing mitigation each one defeats, not just how to detect them. |
+| MemoryArena | [memoryarena.github.io](https://memoryarena.github.io/) | Multi-session agent gym with hidden cross-session dependencies; agents that saturate single-session memory benchmarks perform poorly here. Widely reported as ICML 2026 in secondary coverage; the paper's own arXiv listing (2602.16313) carries no venue field. |
+| Agent Evaluation Should Be Agentified | [ICML 2026 poster](https://icml.cc/virtual/2026/poster/67210) | Position paper: fixed, benchmark-specific harnesses cause test/production mismatch; proposes an open, agent-agnostic assessment interface instead. |
+
 ### The Contribution Ecosystem (June 2026)
 
 Two maps you need. First, the **open-source audit and eval tooling** where outside contributions are genuinely wanted:
 
 | Tool | What it is | Where you can contribute |
 |------|-----------|--------------------------|
-| [Petri](https://github.com/safety-research/petri) | Anthropic's open-source automated alignment-auditing framework (auditor agent + judge), now maintained by the nonprofit Meridian Labs; used in the Fable 5 system card's cross-developer comparison | New seed scenarios, judge calibration, eval-awareness countermeasures (the Petri 2.0 focus) |
-| [Inspect AI](https://inspect.aisi.org.uk/) + [inspect_evals](https://github.com/UKGovernmentBEIS/inspect_evals) | UK AISI's eval framework: sandboxing, agent/multi-agent support, Bayesian evaluator-reliability stats; 200+ prebuilt evals | Community eval registry — since May 8, 2026, contributions go through a yaml-based `/register/` folder with automated review |
+| [Petri](https://github.com/safety-research/petri) | Anthropic's open-source automated alignment-auditing framework (auditor agent + judge); donated to the nonprofit Meridian Labs May 7, 2026 (Anthropic's own post dateline; distinct from the unrelated May 8, 2026 inspect_evals registry cutover below); used in the Fable 5 system card's cross-developer comparison | New seed scenarios, judge calibration, eval-awareness countermeasures (the Petri 2.0 focus); Petri 3.0 separates the auditor model from the target model and adds [Dish](https://meridianlabs.ai/blog/posts/introducing-petri-3/) (runs against a model's real system prompt/production harness) plus the companion tool Bloom (generates single-behavior eval suites that quantify frequency/severity) |
+| [Inspect AI](https://inspect.aisi.org.uk/) + [inspect_evals](https://github.com/UKGovernmentBEIS/inspect_evals) | UK AISI's eval framework: sandboxing, agent/multi-agent support, Bayesian evaluator-reliability stats; 200+ prebuilt evals | Community eval registry — since May 8, 2026, contributions go through a GitHub issue carrying an arXiv URL and source-code link, validated by a bot that derives eval metadata and opens the PR automatically |
 | [ControlArena](https://inspect.aisi.org.uk/) | UK AISI's control/sabotage evaluation suite built on Inspect (used against Mythos 5: >60% side-task success below 60% monitor AUROC vs a weak monitor) | New sabotage settings, stronger/cheaper monitors |
 | [Harbor](https://harborframework.com/docs/running-tbench) | Container-based agent rollout framework; official harness for Terminal-Bench 2.0; runs Claude Code, Codex CLI, OpenHands | Harness adapters, task environments |
 | [verifiers](https://github.com/PrimeIntellect-ai/verifiers) + [Environments Hub](https://www.primeintellect.ai/blog/environments) | Prime Intellect's "RL environments + evals are one artifact" stack; Hub hosts 2,500+ open-source environments | New environments — each one is simultaneously an eval and an RL training task |
 | [promptfoo](https://www.promptfoo.dev/blog/promptfoo-joining-openai/) | Red-teaming/security eval framework (prompt injection, jailbreaks, tool misuse); acquired by OpenAI in March 2026, remains open source | Attack plugins, red-team test packs |
+| [Agents' Last Exam](https://agents-last-exam.org/) | Rolling long-horizon agent benchmark: periodic new public task subsets (the paper fixes no cadence; ~6 months per secondary coverage), private tasks rotate in as public ones retire; 1,500+ tasks toward a target of 5,000 | Expert-authored task submissions |
 
 Second, the **external evaluator ecosystem** — the organizations that frontier labs now rely on for pre-deployment testing. This is the career map for "alignment evaluation" outside the labs themselves:
 
@@ -701,6 +721,8 @@ Second, the **external evaluator ecosystem** — the organizations that frontier
 | [Andon Labs](https://andonlabs.com/) | Long-horizon behavioral testing in business sims | Vending-Bench 2 / Vending-Bench Arena testing of Fable 5 |
 
 Sources: [Fable 5 / Mythos 5 system card](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf) §2.3.8, §3.3, §6.2.3–6.2.5, [GPT-5.5 system card](https://deploymentsafety.openai.com/gpt-5-5/gpt-5-5.pdf), [AISI 2025 year in review](https://www.aisi.gov.uk/blog/our-2025-year-in-review), [OpenAI–Promptfoo acquisition](https://openai.com/index/openai-to-acquire-promptfoo/).
+
+> **September 2026 update — evaluation capacity is itself a constraint.** UK AISI stated it could not complete full agentic monitorability evaluations of GPT-6 Astra in the time available for testing ([Deployment Safety Hub](https://deploymentsafety.openai.com/gpt-6-astra/external-evaluation-for-monitorability---uk-aisi)). The Financial Times reported (Sept 10, 2026) that Anthropic did not give the UK AI Security Institute pre-release access to Mythos 5.1; Anthropic had not commented publicly at the time of the report ([TheNextWeb re-report](https://thenextweb.com/news/anthropic-mythos-5-1-uk-aisi-pre-release-testing-withheld)). A June 30, 2026 statement by Sen. Ted Budd calling on CAISI to resume publishing frontier-model evaluations indicates publication had paused ([statement](https://www.budd.senate.gov/2026/06/30/budd-calls-for-caisi-to-resume-publishing-research-on-frontier-ai-models/)). If "external evaluator" is on your career map above, access and capacity are live variables, not fixed infrastructure.
 
 ---
 
@@ -941,6 +963,8 @@ ANTHROPIC'S RESEARCH PHILOSOPHY
    This is unusual: most companies hide vulnerabilities.
    Anthropic views transparency as essential for collective safety.
 ```
+
+> **September 2026 update:** the RSP referenced above has since moved to **v3.4**, effective July 8, 2026 — see the version history and redline on the [RSP page](https://www.anthropic.com/responsible-scaling-policy). Two more documents belong on a researcher's reading list alongside the RSP text itself: the [August 2026 Risk Report](https://www.anthropic.com/aug-2026-risk-report), and the **RSP Noncompliance Reporting and Anti-Retaliation Policy** (updated March 24, 2026, so it predates this window rather than shipping alongside v3.4), which adds an informal-inquiry channel for employees to raise possible RSP violations.
 
 > Sources: [Fable 5 / Mythos 5 system card](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf) §2.1–2.3, §6.4.1–6.4.2, §6.5.5, [reward hacking → emergent misalignment paper](https://arxiv.org/abs/2511.18397), [Responsible Scaling Policy](https://www.anthropic.com/responsible-scaling-policy).
 
@@ -1297,6 +1321,42 @@ print(f"Neutral: {neutral:.2%}   Incentive-to-sandbag: {incentive:.2%}")
 
 A useful write-up includes the raw paired outcomes, measurement coverage,
 uncertainty, alternative explanations, and the next discriminating experiment.
+
+#### Starter 3 — Reproduce the False Average effect on a toy monitor
+
+Test whether rewriting only a sabotage transcript's reasoning narrative --
+leaving the actual commands/tool-call outputs byte-for-byte unchanged --
+collapses a held-out CoT monitor's catch rate, the way it does in [A False
+Average](https://arxiv.org/html/2608.00583v1) (arXiv 2608.00583).
+
+```python
+def catch_rate(monitor, transcripts: list[dict]) -> float:
+    flagged = sum(1 for t in transcripts if monitor.flags(t["reasoning"], t["actions"]))
+    return flagged / len(transcripts)
+
+# 1. Build a small set of toy sabotage transcripts: a reasoning field plus
+#    the actual tool calls/commands, hand-labeled as sabotage.
+# 2. Train or prompt a simple CoT monitor (classifier or judge prompt) on a
+#    disjoint training split; hold out the rest for measurement.
+baseline = catch_rate(monitor, held_out_transcripts)
+
+# 3. Paraphrase ONLY the reasoning field of each held-out transcript to read
+#    like good-faith engineering narration. Do not touch the actions/commands
+#    -- the exploit itself must stay byte-for-byte identical.
+rewritten = [
+    {**t, "reasoning": paraphrase_as_good_faith(t["reasoning"])}
+    for t in held_out_transcripts
+]
+after = catch_rate(monitor, rewritten)
+print(f"Catch rate: {baseline:.1%} -> {after:.1%}")
+# The paper's result on its own monitor/transcripts: ~95% -> under 11%.
+# A toy replication on a small hand-built set will not reproduce that exact
+# number -- report your own baseline and delta, not theirs.
+```
+
+Write up the paired catch-rate drop, the monitor's false-negative examples,
+and whether a monitor that also sees the actions (not just the reasoning)
+recovers performance.
 
 ---
 

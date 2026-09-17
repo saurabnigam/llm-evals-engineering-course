@@ -865,6 +865,28 @@ Accuracy is dominated by the majority class (passes), so a judge that's nearly b
 
 The mirror failure is just as expensive. Suppose prompt-iteration gets TPR to 90% but TNR slips to 60%. On 1,000 production traces with a 5% true failure rate: the judge catches 45 of 50 real failures — and false-flags 380 of the 950 good ones. Your review queue is now 425 items, 89% noise, and within two weeks nobody on the team opens it. That is what "poor TNR is worse than no judge" means concretely: the judge didn't just fail, it *burned the team's trust in the whole eval system*. Report TPR **and** TNR per failure mode, and pick the operating point by which error costs more — never by the single accuracy number.
 
+#### Two 2026 findings that change how you validate a judge
+
+The TPR/TNR loop above assumes the judge's verdict tracks the *response*. Two papers from this quarter say that assumption needs its own test:
+
+1. **Rubric-artifact leakage.** A classifier trained on the rubric text alone — never shown the response being graded — predicts the judge's verdict at non-trivial accuracy ([arXiv 2609.02942](https://arxiv.org/html/2609.02942), Sept 2026). Some of what looks like judge "signal" is just rubric wording correlating with your label distribution, not the response being graded. Add a **rubric-only baseline** to every judge validation: if a response-blind model beats the majority-class rate by much, the rubric is leaking, not the judge grading.
+
+```python
+# Sketch: rubric-only baseline — quantifies rubric-text leakage (arXiv 2609.02942)
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import cross_val_score
+
+X = TfidfVectorizer().fit_transform(rubric_texts)    # rubric only — NOT the response
+y = judge_verdicts                                    # your judge's own verdicts on the golden set
+leak_acc = cross_val_score(LogisticRegression(), X, y, cv=5).mean()
+majority_rate = max(y.count(0), y.count(1)) / len(y)
+if leak_acc > majority_rate + 0.05:
+    print(f"rubric leaks verdict signal: {leak_acc:.2f} vs {majority_rate:.2f} baseline")
+```
+
+2. **Reliability ≠ validity.** Judge meta-evaluations over-weight raw human agreement as the headline metric ([arXiv 2606.19544](https://arxiv.org/html/2606.19544v1)). A judge can be highly self-consistent (good κ, good TPR/TNR) and still be biased in ways the rubric wording predicts (finding 1 above) — agreement and validity are different claims. Where the provider exposes logprobs, report judge **calibration** — ECE or Brier score — as a second axis alongside TPR/TNR/κ, not a replacement for them.
+
 ---
 
 ## 2.4 Human Evaluation
@@ -1551,6 +1573,9 @@ Use pass@k for "one success matters" tools (research, brainstorming); pass^k for
 - [WebArena](https://webarena.dev/) and [OSWorld](https://os-world.github.io/) — browser/desktop interaction. Note: computer-use agents crossed the OSWorld-Verified human baseline (~72%) in early 2026 ([coverage](https://coasty.ai/blog/osworld-benchmark-results-2026-computer-use-ranked)).
 - [Cybench](https://cybench.github.io/) — cybersecurity CTF agents. Historically important, but saturated: Anthropic dropped it from the Fable 5 cyber suite in favor of harder internal ranges like ExploitBench ([Fable 5 system card §3.2](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf)).
 - [SHADE-Arena](https://alignment.anthropic.com/2025/strengthening-red-teams/) — Anthropic's modular control-evaluation scaffold for sabotage/control tests; used in the Fable 5 card's covert-capability evals (§6.5.4).
+- **Senior SWE-Bench** ([Snorkel AI](https://snorkel.ai/blog/senior-swe-bench-evaluating-coding-agents-like-senior-engineers/) + Princeton + UW–Madison, launched Jul 16, 2026) — 100 tasks (50 public/50 private) from real PRs on 12 production repos, split into "investigate and fix" and "design and build" families. A worked example of **layered grading**: pre-written behavioral verifiers, then an adaptive validation agent that writes its own test scripts, then a "taste judge" scoring code quality A–F against repo conventions (pass = above D). The result is a cost/quality frontier, not one accuracy number: Claude Fable 5 leads at ≈29% tasteful-solve at ≈$29/task; GPT-5.6 Sol ranks third at ≈$3/task (~10× cheaper) and Grok 4.5 solves 17.2% at ≈$1/task (~29× cheaper) — the cost discount varies by model, not a flat ratio.
+- **MemoryArena** ([memoryarena.github.io](https://memoryarena.github.io/); ICML 2026 per secondary reports — venue not stated on the project page) — a multi-session agent gym where later tasks depend on earlier decisions across days/weeks. Headline finding: agents that saturate single-session, LoCoMo-style memory benchmarks perform poorly here — a single-session memory score does not predict multi-session competence.
+- **Agents' Last Exam (ALE)** ([agents-last-exam.org](https://agents-last-exam.org/)) — long-horizon, economically-grounded professional-task eval, 1,500+ tasks toward a 5,000-task target. Uses **rolling evaluation**: fresh public subsets periodically replace retired tasks while private tasks rotate in (the paper commits to the rolling design but names no cadence; secondary coverage says ~6 months) — a structural answer to the SWE-bench-family contamination disputes above, not just a bigger one-shot test set. Hardest-tier average full-pass rate ≈2.6%, nowhere near saturated; the reference point for long-horizon, rolling-refresh agent evals.
 
 **Tooling:** [Inspect AI](https://inspect.aisi.org.uk/) is the de-facto framework for agent evals — first-class support for ReAct and multi-agent solvers, Docker/Kubernetes sandboxes, MCP tool integration, and an "agent bridge" that lets you score externally-built agents (Claude Code, Codex CLI, Gemini CLI) inside the Inspect harness.
 
