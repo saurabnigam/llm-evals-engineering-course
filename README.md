@@ -358,8 +358,10 @@ final = s if calibrated_route.accept(s) else strong_judge.score(response)
 ## Repository Structure
 
 ```
-eval-engineering/
+llm-evals-engineering-course/
 ├── README.md                              # This file
+├── COURSE_AUDIT.md                        # Chapter-by-chapter QA log and rubric
+├── test_course_examples.py                # Regression tests for copyable code
 ├── 00-prerequisites/                      # ML/AI basics
 ├── 01-fundamentals/                       # Core concepts
 ├── 02-evaluation-methods/                 # All techniques + psychometric & dynamic
@@ -371,19 +373,32 @@ eval-engineering/
 ├── 08-case-studies/                       # Worked composites + sourced cases
 ├── 09-langchain-examples/                 # Python code
 ├── 10-advanced-topics/                    # Enterprise patterns + alignment faking
-├── 11-how-frontier-models-are-trained/    # Training pipeline deep dive (NEW)
-├── 12-eval-training-separation/           # Contamination & dynamic evals (NEW)
-├── 13-advancing-ai-research/              # Research frontier & career path (NEW)
-├── 14-loop-engineering/                   # Self-correcting loops & their metrics (NEW)
-├── 15-opus5-eval-techniques/              # Opus 5-era harness techniques (NEW)
-└── 16-frontier-architectures-and-research-thinking/   # Reading papers, research habits (NEW)
+├── 11-how-frontier-models-are-trained/    # Training pipeline deep dive
+├── 12-eval-training-separation/           # Contamination & dynamic evals
+├── 13-advancing-ai-research/              # Research frontier & career path
+├── 14-loop-engineering/                   # Self-correcting loops & their metrics
+├── 15-opus5-eval-techniques/              # Opus 5-era harness techniques
+└── 16-frontier-architectures-and-research-thinking/   # Reading papers, research habits
 ```
+
+---
+
+## Quality Control
+
+Every module's copyable Python is extracted straight from its Markdown source and regression-tested, so the README stays the executable source of truth rather than drifting from it:
+
+```bash
+pip install pytest
+pytest test_course_examples.py -v
+```
+
+Each revision pass is also logged against a fixed rubric — human entry point, eval semantics, teaching evidence, no ornamental examples, current coverage, executable integrity — in [`COURSE_AUDIT.md`](./COURSE_AUDIT.md), so you can see exactly what was checked and when, not just that it "looks done."
 
 ---
 
 ## 🤝 Contributing
 
-This is a living document. Suggestions welcome!
+This is a living document, refreshed roughly every 6–8 weeks against the frontier (see the "What's New" sections above for the cadence). Suggestions and corrections welcome via issues or PRs — if you're flagging a factual claim, a source link makes it actionable immediately.
 
 ---
 
