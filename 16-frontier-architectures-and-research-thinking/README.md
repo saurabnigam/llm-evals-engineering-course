@@ -127,6 +127,16 @@ GPT-5.6 above told you about market positioning from a closed release. GPT-6 Ast
 
 > **What a builder takes from this:** a framework-threshold crossing is a data point worth logging in your own model-selection notes, independent of whether you ever touch cyber-offense capability. It tells you the lab believed its own pre-deployment eval enough to pause a training run already in progress. That is a stronger signal about how seriously to take a vendor's evals than any single benchmark score in this module.
 
+### September 22, 2026: two releases on one day — Claude Opus 5.5 and GPT-6 Sol/Luna
+
+Two labs shipped on the same calendar day. Treat that as a scheduling coincidence, not evidence either release responds to the other — no primary source claims a causal link, and this module does not either.
+
+**Claude Opus 5.5** (Anthropic, model ID `claude-opus-5-5`) is framed by its own card as "an upgrade to Claude Opus 5," not a new tier: "On many evaluations, it matches or exceeds Claude Fable 5.1 and Claude Mythos 5.1." The launch page: "It performs at the level of Claude Fable 5.1 on most work" and calls it "the new leading model," at "40% less" cost than Opus 5 "on typical workloads." List price fell 20% (input $5→$4/MTok, output $25→$20/MTok); the rest of that 40% claim has to come from somewhere other than list price, and the likeliest single source is the next fact. Four API-contract changes ship with it, all labeled breaking on Anthropic's own docs: thinking can no longer be disabled at any effort; forced `tool_choice` is rejected with a `400` (the same restriction Fable 5.1 already had); thinking blocks are now bound to both the producing model and an unedited conversation prefix; and the older `computer_20251124` tool type is rejected on the Claude API and Google Cloud. A fifth, non-breaking change matters most for cost tracking: **default effort dropped from `high` to `medium`.** A harness that measures cost-per-task without pinning `effort` explicitly is now silently comparing two different operating points, not two model generations (Module 15 §15.3 has the full worked example). [platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5](https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5)
+
+**GPT-6 Sol and GPT-6 Luna** (OpenAI) are cheaper, faster siblings built on GPT-6 Astra's training recipe [press-sourced, not an OpenAI primary statement: TechCrunch, MacRumors], at roughly half the price of their GPT-5.6 namesakes — Sol $2/$10 per MTok (was $4/$20), Luna $0.10/$0.50 (was $0.20/$1.20) — both at 1.05M context / 128K max output. Positioned down-market from GPT-6 Astra, the same way Opus 5.5 is positioned as the new recommended default rather than a frontier-pushing flagship: both labs' marquee release that day was a *cheaper* model, not a more capable one.
+
+> **The lesson, not the announcement:** same-day releases from two labs tell you nothing about each other's capability, because nothing here was run on a shared harness. Comparing Opus 5.5's card numbers against GPT-6 Sol/Luna's model-page numbers is comparing two self-reports side by side; the only evidence that crosses labs is a third party that ran both under one configuration (§16.5 below) — and as of Sept 23 no such head-to-head existed for either release. Compare within a harness, not across announcements.
+
 ---
 
 ## 16.3 What Actually Transfers to People Who Build on Models
@@ -197,7 +207,7 @@ Two rules that make this work:
 
 Everything in Module 12 (contamination) and Module 08 (case studies) applies to reading other people's numbers. Seven questions, in order — the first four were already here; questions 5–7 are the September 2026 additions:
 
-1. **At what effort, on what harness?** "80 on the Coding Agent Index at maximum reasoning" is a fundamentally different claim from "80." A score is a function of (model, effort, scaffold, split) — Module 08 §6.
+1. **At what effort, on what harness?** "80 on the Coding Agent Index at maximum reasoning" is a fundamentally different claim from "80." A score is a function of (model, effort, scaffold, split) — Module 08 §6. Claude Opus 5.5 makes the effort axis concrete: its own card reports CursorBench 4.0 at 57.8% (max effort), 56.0% (xhigh/high), and 52.5% (medium) — three claims about one model, one benchmark, one week, differing by more than five points on effort alone, with the API's own *default* now `medium`. The same pattern shows up across harnesses, not just effort settings: Terminal-Bench 4.0 at 66.4% in Anthropic's own harness (xhigh) versus 59.6% in Artificial Analysis's harness — same model, same version string (Module 12's "benchmark names are not stable identifiers" has the fuller writeup).
 2. **Who ran it, and on which split?** A vendor-run public-split result and an
    independent private-split result have different leakage, tuning, and
    governance risks. Compare them only with the full configuration attached.
@@ -231,7 +241,12 @@ Everything in Module 12 (contamination) and Module 08 (case studies) applies to 
    task-based AI-R&D suite saturated too, per its August 2026 Risk Report, which
    replaced it with the harder 449-problem CoBench ([anthropic.com/aug-2026-risk-report](https://www.anthropic.com/aug-2026-risk-report)).
    A flat score can mean the model stopped improving, or that the ruler ran out
-   of marks — Module 12 §12.5 has the fuller ledger.
+   of marks — Module 12 §12.5 has the fuller ledger. The ruler itself can also
+   get refit: Anthropic's Opus 5.5 card re-fit its own composite index (the
+   AECI) on a larger benchmark basket and republished Opus 5's prior score,
+   160.7→165.18, on the new fit — a jump that is entirely an instrument
+   change; the Opus 5 model itself did not change (Module 12 §12.3 has the full
+   AECI-refit and Epoch-ECI-is-a-different-index writeup).
 7. **Self-reported, vendor-harness, or independent?** CAISI's independent
    evaluation of DeepSeek V4 Pro found it trailing the US frontier by roughly
    eight months and scoring lower than DeepSeek's own self-reported numbers
@@ -240,6 +255,17 @@ Everything in Module 12 (contamination) and Module 08 (case studies) applies to 
    Astra differently enough from each other to trigger an index redesign (§16.2
    above). The identity of the measurer is not a formality — it changes the
    number.
+
+**Week one, concretely.** For a model released this week — Claude Opus 5.5
+shipped Sept 22 — apply all seven questions to exactly two sources: the
+vendor's own card, and whichever independent aggregator moved fastest (here,
+Artificial Analysis, which had it scored within a day). Every other
+leaderboard named in this module — ARC-AGI-3, tbench.ai's Terminal-Bench,
+Scale SEAL's SWE-bench Pro, FrontierMath Erdős, METR, Epoch's ECI — had no
+Opus 5.5 entry as of Sept 23 (Module 12 §12.3 has the full list). Treat a
+week-one number as provisional on two separate counts, not one: it has been
+independently reproduced by at most one source, and that one reproduction
+used its own harness, not the vendor's — question 1, again.
 
 One more direction worth holding alongside the six above: everything so far
 describes a benchmark inflating a score. A September 2026 paper on
@@ -505,6 +531,7 @@ Pick a single ablation row from either open report. Design the smallest equivale
 - ExploitGym incident — **primary organizational accounts:** [OpenAI, *OpenAI and Hugging Face partner to address security incident during model evaluation*](https://openai.com/index/hugging-face-model-evaluation-security-incident/) (eval configuration, Artifactory escape, model set, and preliminary findings); [Hugging Face, *Security incident disclosure — July 2026*](https://huggingface.co/blog/security-incident-july-2026) (detection, impact, and remediation); and Hugging Face's later [technical timeline](https://huggingface.co/blog/agent-intrusion-technical-timeline) (reconstructed actions and attack chain). Each organization labels parts of the agent's objective as an inference, and OpenAI says its investigation/third-party assessment is ongoing.
 - Kimi K3 release context — [VentureBeat](https://venturebeat.com/technology/chinas-moonshot-ai-releases-kimi-k3-the-largest-open-source-model-ever-rivaling-top-u-s-systems)
 - GPT-6 Astra — [Path to Astra](https://openai.com/index/path-to-astra/), [pacing announcement](https://openai.com/index/pacing-model-development-cyber-capabilities/), [Deployment Safety Hub / system card](https://deploymentsafety.openai.com/gpt-6-astra)
+- Claude Opus 5.5 — [system card PDF](https://www-cdn.anthropic.com/fc1b44717c85dc068bc6ba5024219938094694bd/Claude%20Opus%205.5%20System%20Card.pdf), [launch post](https://www.anthropic.com/news/claude-opus-5-5), [what's new / breaking changes](https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5), [Artificial Analysis Intelligence Index write-up](https://artificialanalysis.ai/articles/claude-opus-5-5)
 - ARC-AGI-3 leaderboard — [arcprize.org/leaderboard](https://arcprize.org/leaderboard)
 - FrontierMath Erdős — [epoch.ai](https://epoch.ai/latest/announcing-frontiermath-erdos)
 - Terminal-Bench 3.0 — [tbench.ai](https://www.tbench.ai/news/terminal-bench-3-0)

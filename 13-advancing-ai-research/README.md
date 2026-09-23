@@ -544,10 +544,29 @@ Why this matters for your career: Petri is exactly the kind of infrastructure wh
 │  Open question: Monitorability metrics that survive training pressure;     │
 │  whether labs should pay a capability tax to keep reasoning legible.       │
 │                                                                              │
+│  PROBLEM 8: ELICITATION VALIDITY (Sept 2026)                                │
+│  ─────────────────────────────────────────────                              │
+│                                                                             │
+│  Challenge: capability evals meant to rule out danger have long used        │
+│  "helpful-only" variants (refusal training removed) to avoid                │
+│  underestimating a model from refusals. But a helpful-only variant is       │
+│  not the model that ships -- which one did you actually measure?            │
+│                                                                             │
+│  State of art: starting with Claude Opus 5.5, Anthropic reversed its        │
+│  own practice for CB capability evals: "we have become concerned            │
+│  about continuing to use helpful-only variants in capability                │
+│  evaluations due to their potential divergence from production              │
+│  variants" (system card section 2.2.1) -- now measuring release-            │
+│  candidate models on beneficial proxy tasks designed to avoid               │
+│  refusals.                                                                  │
+│  Open question: helpful-only variants raise the elicitation ceiling         │
+│  but can diverge from what ships; no consensus yet on which variant         │
+│  to report, or whether to report both.                                      │
+│                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-> Sources for the 2026 state-of-art claims: [METR time horizons](https://metr.org/time-horizons/) and [Time Horizon 1.1](https://metr.org/blog/2026-1-29-time-horizon-1-1/), [Vending-Bench 2 (Andon Labs)](https://andonlabs.com/evals/vending-bench-2), [Fable 5 / Mythos 5 system card](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf) §6.2.4, §6.5.1, §6.5.5, §8.17.6, [GPT-5.5 system card](https://deploymentsafety.openai.com/gpt-5-5/gpt-5-5.pdf), [Gemini 3 Pro FSF report](https://storage.googleapis.com/deepmind-media/gemini/gemini_3_pro_fsf_report.pdf), [OpenAI CoT monitoring](https://openai.com/index/chain-of-thought-monitoring/).
+> Sources for the 2026 state-of-art claims: [METR time horizons](https://metr.org/time-horizons/) and [Time Horizon 1.1](https://metr.org/blog/2026-1-29-time-horizon-1-1/), [Vending-Bench 2 (Andon Labs)](https://andonlabs.com/evals/vending-bench-2), [Fable 5 / Mythos 5 system card](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf) §6.2.4, §6.5.1, §6.5.5, §8.17.6, [GPT-5.5 system card](https://deploymentsafety.openai.com/gpt-5-5/gpt-5-5.pdf), [Gemini 3 Pro FSF report](https://storage.googleapis.com/deepmind-media/gemini/gemini_3_pro_fsf_report.pdf), [OpenAI CoT monitoring](https://openai.com/index/chain-of-thought-monitoring/). Problem 8: [Claude Opus 5.5 system card](https://www-cdn.anthropic.com/fc1b44717c85dc068bc6ba5024219938094694bd/Claude%20Opus%205.5%20System%20Card.pdf) §2.2.1.
 
 ---
 
@@ -694,6 +713,17 @@ Twelve more items landed between the June list above and this revision (mid-July
 | Contamination Taxonomy by Defeated Mitigation | [arXiv 2608.29463](https://arxiv.org/html/2608.29463) | Reorganizes contamination types (direct/derivative/temporal/distributional/acquired) by which existing mitigation each one defeats, not just how to detect them. |
 | MemoryArena | [memoryarena.github.io](https://memoryarena.github.io/) | Multi-session agent gym with hidden cross-session dependencies; agents that saturate single-session memory benchmarks perform poorly here. Widely reported as ICML 2026 in secondary coverage; the paper's own arXiv listing (2602.16313) carries no venue field. |
 | Agent Evaluation Should Be Agentified | [ICML 2026 poster](https://icml.cc/virtual/2026/poster/67210) | Position paper: fixed, benchmark-specific harnesses cause test/production mismatch; proposes an open, agent-agnostic assessment interface instead. |
+
+### September 23 Additions
+
+Four items from the Sept 17–23 window, added alongside the Claude Opus 5.5 release.
+
+| Paper | Source | One-line takeaway |
+|---|---|---|
+| Claude Opus 5.5 system card, §6.1.3 | [PDF](https://www-cdn.anthropic.com/fc1b44717c85dc068bc6ba5024219938094694bd/Claude%20Opus%205.5%20System%20Card.pdf) | Not a paper but a research-practice worth studying directly: a Claude Mythos 5.1 instance with internal Slack access reviewed a near-final draft of the card's own alignment section, and the published transcript shows the model pushing back on overstated claims — model-assisted claim calibration as a documented step in writing a safety case. |
+| When Consistency Does Not Mean Reliability | [arXiv 2609.13824](https://arxiv.org/abs/2609.13824) | Local LLM judges (LLaMA-3-8B, Qwen2.5-7B) hit 97.3%/92.3% self-consistency but correlate with human ratings at only r = 0.275/0.340 — repeatable is not the same claim as correct. |
+| Beyond Outcomes: Dual-View Relational Learning for Efficient Agent Benchmarking | [arXiv 2609.18909](https://arxiv.org/abs/2609.18909) | Combines outcome and process signals to compress agent benchmarks 24×–40× while still predicting full-benchmark performance — a cost lever for anyone re-running suites after every point release. |
+| Chart-RVR (optional) | [arXiv 2609.24071](https://arxiv.org/abs/2609.24071) | LLM-as-auditor scores process verifiability and evidence localization for chart-reasoning agents, not just final-answer accuracy — the same "audit the process, not only the outcome" move as §6.1.3 above, applied to a narrower domain. |
 
 ### The Contribution Ecosystem (June 2026)
 
@@ -965,6 +995,8 @@ ANTHROPIC'S RESEARCH PHILOSOPHY
 ```
 
 > **September 2026 update:** the RSP referenced above has since moved to **v3.4**, effective July 8, 2026 — see the version history and redline on the [RSP page](https://www.anthropic.com/responsible-scaling-policy). Two more documents belong on a researcher's reading list alongside the RSP text itself: the [August 2026 Risk Report](https://www.anthropic.com/aug-2026-risk-report), and the **RSP Noncompliance Reporting and Anti-Retaliation Policy** (updated March 24, 2026, so it predates this window rather than shipping alongside v3.4), which adds an informal-inquiry channel for employees to raise possible RSP violations.
+>
+> **September 22 vocabulary update:** the Claude Opus 5.5 system card uses no ASL-*N* labels at all — determinations are written as capability tiers (CB-1, not CB-2; "Autonomy threat model 2 is not applicable") under the **Frontier Compliance Framework (FCF)**, which the card describes as "our compliance framework for applicable regimes, including California's Transparency in Frontier AI Act (SB 53) and the EU AI Act's General-Purpose AI Code of Practice." The card still refers to "our RSP and FCF capability threshold determinations", so one reasonable reading is that the FCF is the compliance layer that states RSP determinations in regulatory terms rather than a new risk framework replacing ASL. The card does not say this explicitly; treat it as an interpretation, and map vocabularies rather than comparing labels as levels.
 
 > Sources: [Fable 5 / Mythos 5 system card](https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf) §2.1–2.3, §6.4.1–6.4.2, §6.5.5, [reward hacking → emergent misalignment paper](https://arxiv.org/abs/2511.18397), [Responsible Scaling Policy](https://www.anthropic.com/responsible-scaling-policy).
 
