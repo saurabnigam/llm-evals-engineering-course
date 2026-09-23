@@ -449,6 +449,8 @@ Three details in there are the whole lesson:
 2. **The prompt permits PASS and UNKNOWN explicitly.** That reduces two prompt asymmetries: inventing a flaw because the judge expects one, and forcing a decision when the supplied evidence is insufficient. Measure both false positives and `UNKNOWN` coverage on a human-labeled calibration set.
 3. **A refusal returns `None`, not `FAIL`.** Scoring a refusal as a failure invents a measurement nobody made, and refusals cluster by topic — so it depresses scores in precisely the categories you are trying to assess.
 
+`LLMJudge` also passes `effort` explicitly (`effort: str = "high"`, not left to the API default) — worth doing on principle even against `claude-opus-5`, because on `claude-opus-5-5` the API default is `medium`, not `high`. An unpinned judge silently changes measurement conditions the day you swap models.
+
 **Where a graded score IS legitimate:** ranking and triage, not gating. If you need to sort 500 outputs by quality to review the worst 20, a continuous score is fine — you only care about ordering. The moment a number becomes a release gate or a reported metric, switch to binary criteria you can define.
 
 ### 2.3.2 Multi-Judge Panel
@@ -865,9 +867,9 @@ Accuracy is dominated by the majority class (passes), so a judge that's nearly b
 
 The mirror failure is just as expensive. Suppose prompt-iteration gets TPR to 90% but TNR slips to 60%. On 1,000 production traces with a 5% true failure rate: the judge catches 45 of 50 real failures — and false-flags 380 of the 950 good ones. Your review queue is now 425 items, 89% noise, and within two weeks nobody on the team opens it. That is what "poor TNR is worse than no judge" means concretely: the judge didn't just fail, it *burned the team's trust in the whole eval system*. Report TPR **and** TNR per failure mode, and pick the operating point by which error costs more — never by the single accuracy number.
 
-#### Two 2026 findings that change how you validate a judge
+#### Three 2026 findings that change how you validate a judge
 
-The TPR/TNR loop above assumes the judge's verdict tracks the *response*. Two papers from this quarter say that assumption needs its own test:
+The TPR/TNR loop above assumes the judge's verdict tracks the *response*. Three papers from this quarter say that assumption needs its own test:
 
 1. **Rubric-artifact leakage.** A classifier trained on the rubric text alone — never shown the response being graded — predicts the judge's verdict at non-trivial accuracy ([arXiv 2609.02942](https://arxiv.org/html/2609.02942), Sept 2026). Some of what looks like judge "signal" is just rubric wording correlating with your label distribution, not the response being graded. Add a **rubric-only baseline** to every judge validation: if a response-blind model beats the majority-class rate by much, the rubric is leaking, not the judge grading.
 
@@ -886,6 +888,7 @@ if leak_acc > majority_rate + 0.05:
 ```
 
 2. **Reliability ≠ validity.** Judge meta-evaluations over-weight raw human agreement as the headline metric ([arXiv 2606.19544](https://arxiv.org/html/2606.19544v1)). A judge can be highly self-consistent (good κ, good TPR/TNR) and still be biased in ways the rubric wording predicts (finding 1 above) — agreement and validity are different claims. Where the provider exposes logprobs, report judge **calibration** — ECE or Brier score — as a second axis alongside TPR/TNR/κ, not a replacement for them.
+3. **Self-consistency is not the same claim as human agreement.** A study of two small open judges — LLaMA-3-8B and Qwen2.5-7B — found near-perfect exact self-consistency (97.3% and 92.3%: the judge gave the same verdict on a repeat call almost every time) but only weak correlation with human ratings (r = 0.275 and r = 0.340) ([arXiv 2609.13824](https://arxiv.org/abs/2609.13824), "When Consistency Does Not Mean Reliability," Sept 2026). A judge that agrees with itself is not evidence that it agrees with a human — self-consistency and TPR/TNR-against-humans are two different measurements, and only the second one calibrates the judge. Run both, and don't let a high self-consistency number substitute for step 3 of the loop above.
 
 ---
 
@@ -1785,6 +1788,8 @@ The cleanest worked example of "LLM judge as triage, human as final arbiter" —
 1. Sample **2,440 dangerous-capability eval transcripts** (240 automated AI R&D + 1,700 CB on a helpful-only variant + 500 cyber). Elicitation uses **helpful-only model variants** (harmlessness trained away) so refusal-based underperformance can't masquerade as incapability.
 2. Ask a judge (Mythos Preview) to grade each transcript **0–10** for refusal, deliberate inaccuracy, low helpfulness, or consideration of such actions, plus a generic "anything unusual/concerning" score.
 3. Human review triggers on thresholds: sandbagging > 1/10 or concerningness > 3/10. **Only 9 transcripts crossed them**, all manually classified (none were concerning sandbagging).
+
+> Step 1's "helpful-only model variants" is no longer current practice: the Claude Opus 5.5 card reverses it — *"we have become concerned about continuing to use helpful-only variants in capability evaluations due to their potential divergence from production variants"* (§2.2.1) — and now elicits dangerous-capability evals on release-variant models instead. See Module 10 for the full trade-off.
 
 2,440 transcripts, 9 human reviews. That ratio — judge breadth, human depth — is the economics of the whole field.
 

@@ -52,23 +52,39 @@ Primary references for the changing API claims: [Claude model overview](https://
 |---|---|---|---|---|---|
 | Claude Fable 5.1 | `claude-fable-5-1` | 1M | 128K | $10 / $50 (cache read $0.25) | Ceiling-setting; cheaper to replay long transcripts than Fable 5 because of the 0.025× cache-read rate ([pricing](https://platform.claude.com/docs/en/about-claude/pricing)) |
 | Claude Fable 5 | `claude-fable-5` | 1M | 128K | $10 / $50 | Ceiling-setting: hardest reference judgments, adversarial verification (legacy tier, still active) |
-| **Claude Opus 5** | **`claude-opus-5`** | **1M** | **128K** | **$5 / $25** | **Default judge and arbiter; agent-under-test for hard tasks** |
+| **Claude Opus 5.5** | **`claude-opus-5-5`** | **1M** | **128K** | **$4 / $20 (cache read $0.20)** | **Anthropic's recommended default since Sept 22; adopting it as your judge is a measurement change — re-run judge calibration first (§15.4)** |
+| Claude Opus 5 | `claude-opus-5` | 1M | 128K | $5 / $25 | A/B baseline; last Opus that can disable thinking (≤ `high`) (listed as legacy, still Active) |
 | Claude Opus 4.8 | `claude-opus-4-8` | 1M | 128K | $5 / $25 | Fallback target on refusals; A/B baseline |
 | Claude Sonnet 5 | `claude-sonnet-5` | 1M | 128K | $2 / $10 | High-volume judging where κ against humans holds up |
 | Claude Haiku 4.5 | `claude-haiku-4-5` | 200K | 64K | $1 / $5 | First-stage screen in a cascade; deterministic-ish rule checks |
 
 Facts that change harness design, not just the model string:
 
-- **Thinking is on by default on Opus 5.** Omitting `thinking` runs adaptive thinking — unlike Opus 4.8/4.7, where omitting it meant no thinking. If your harness never set `thinking`, it just got more capable *and* more expensive, and `max_tokens` now caps thinking **plus** response text together. A judge with `max_tokens=512` that used to be fine can now truncate.
-- **Effort has five levels** — `low`, `medium`, `high` (default), `xhigh`, `max` — set inside `output_config`, not top-level.
-- **Disabling thinking is capped at `high` effort.** `thinking: {"type": "disabled"}` with `xhigh` or `max` is a 400, validated per request.
-- **Prompt-cache minimum is 512 tokens** on Opus 5 (down from 1024 on Opus 4.8, and 4096 on Opus 4.6/Haiku 4.5). Judge prompts that were previously too short to cache now cache.
-- **Opus 5 has its own rate-limit bucket**, separate from the combined Opus 4.x pool. Moving an eval suite over does not inherit your old headroom.
+- **Thinking is on by default on Opus 5 and Opus 5.5.** Omitting `thinking` runs adaptive thinking — unlike Opus 4.8/4.7, where omitting it meant no thinking. If your harness never set `thinking`, it just got more capable *and* more expensive, and `max_tokens` now caps thinking **plus** response text together. A judge with `max_tokens=512` that used to be fine can now truncate.
+- **Effort has five levels** — `low`, `medium`, `high`, `xhigh`, `max` — set inside `output_config`, not top-level. Default is `high` on Opus 5; `medium` on Opus 5.5 (see below).
+- **Disabling thinking is capped at `high` effort — on Opus 5 only.** `thinking: {"type": "disabled"}` with `xhigh` or `max` is a 400 on Opus 5, validated per request. On Opus 5.5, thinking cannot be disabled at any effort level (see "What changes on Opus 5.5" below).
+- **Prompt-cache minimum is 512 tokens** on Opus 5 and Opus 5.5 (down from 1024 on Opus 4.8, and 4096 on Opus 4.6/Haiku 4.5). Judge prompts that were previously too short to cache now cache.
+- **Opus 5 and Opus 5.5 each have their own rate-limit bucket**, separate from the combined Opus 4.x pool and from each other. Moving an eval suite over does not inherit your old headroom.
 - **Safety classifiers can decline**, returning HTTP 200 with `stop_reason: "refusal"`. This has a specific and nasty consequence for evals — see §15.4.
+
+### What changes on Opus 5.5 (Sept 22, 2026)
+
+Four changes are labeled breaking by Anthropic's own [what's new page](https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5) ("Four breaking changes affect code already running on Claude Opus 5"). The rest are non-breaking but still change what your harness measures or pays.
+
+- **Thinking cannot be disabled, at any effort.** `thinking: {"type": "disabled"}` and `thinking: {"type": "enabled", "budget_tokens": N}` both 400 with `invalid_request_error`, but with two different error strings: `"thinking.type.disabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.` for the former, `"thinking.type.enabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.` for the latter — the only lever left is `output_config.effort`. *Why a harness cares:* any thinking-off ablation, or any judge that disabled thinking to save cost, needs a different model (Opus 5) or a different mechanism (lower `effort`).
+- **Forced tool use is rejected.** `tool_choice: {"type": "any"}` / `{"type": "tool", ...}` → 400, text: `tool_choice: type "tool" and "any" are not supported for this model.` The same validation applies to the token-counting endpoint (`count_tokens`). *Why a harness cares:* a judge or grader that force-calls a `record_verdict` tool must move to `tool_choice: {"type": "auto"}` + `strict: true`, or to `output_config.format` structured outputs — the same migration Fable 5.1/Mythos 5.1 already forced (§15.1, §15.4).
+- **Default effort is now `medium`, not `high`.** *Why a harness cares:* this is the change most likely to go unnoticed — see the silent re-baseline in §15.3.
+- **Thinking blocks are bound to model and to an unedited conversation prefix.** Opus 5.5 reads its own and Opus 5/4.x's thinking blocks, not Fable/Mythos blocks; only Fable 5.1/Mythos 5.1 read Opus 5.5's blocks back. Replaying a block after the system prompt, tools, or earlier messages changed now 400s by default for accounts created on/after 2026-08-31 00:00 UTC. *Why a harness cares:* see §15.6.
+- **`computer_20251124` is rejected** on the Claude API and Google Cloud (Bedrock still accepts it); use `computer_toolset_20260801`. *Why a harness cares:* a computer-use eval suite still pinned to the old tool schema needs updating before it runs on Opus 5.5.
+- **Text between tool calls now arrives as `thinking` blocks**, empty by default under `display: "omitted"`. *Why a harness cares:* a trajectory judge or UI that reads inter-tool narration as `text` goes silent — see §15.6/§15.8.
+- **Two new refusal categories, `bio` and `reasoning_extraction`**, beyond `cyber`. *Why a harness cares:* an eval or judge that asks the model to reproduce its own reasoning in the answer can now be declined — record it as unmeasured, not failed (§15.4).
+- **New beta `inline-tools-2026-09-15`** — define or version a tool inside a mid-conversation system message without invalidating the prompt cache. *Why a harness cares:* cheap A/B-testing of tool descriptions/schemas (§15.6, §15.8).
+- **Opus 5.5 has its own rate-limit bucket**, separate from Opus 5's and from the Opus 4.x pool. *Why a harness cares:* migrating a suite to Opus 5.5 does not inherit Opus 5's headroom — budget for the new bucket independently.
+- **Cache reads are 0.05× base input ($0.20/MTok)**, not the standard 0.1×. *Why a harness cares:* applying the standard 0.1× multiplier to Opus 5.5's $4 input price gives $0.40/MTok — twice the real $0.20 — so a cost model that assumes the standard rate overstates Opus 5.5's cached-prefix cost by 2×.
 
 **September 2026 additions (Fable 5.1 / Mythos 5.1 and platform-wide), all per the [Claude Platform release notes](https://platform.claude.com/docs/en/release-notes/overview):**
 
-- **Fable 5.1 / Mythos 5.1 reject forced tool calls.** `tool_choice: {"type": "any"}` and `{"type": "tool", ...}` now return **HTTP 400** — only `auto` and `none` remain. Any harness that force-calls a grader or JSON-extraction tool on these models must migrate to [strict tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use) or [structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) (see below, and §15.4).
+- **Fable 5.1 / Mythos 5.1 reject forced tool calls** (and, since Sept 22, Opus 5.5 — see above). `tool_choice: {"type": "any"}` and `{"type": "tool", ...}` now return **HTTP 400** — only `auto` and `none` remain. Any harness that force-calls a grader or JSON-extraction tool on these models must migrate to [strict tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use) or [structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) (see below, and §15.4).
 - **Per-message `effort` (beta, header `mid-conversation-output-config-2026-07-01`).** `output_config.effort` can now change mid-conversation via a `role: "system"` message **without invalidating the prompt cache** — the pattern this enables is cheap-effort exploration turns followed by a single high-effort judge turn, in one cached session, instead of two separate calls.
 - **Thinking-block replay got stricter.** On accounts created after Aug 31, 2026, replaying a thinking block after the system prompt, tools, or earlier messages changed now returns a **400** instead of being silently accepted. This is a classic harness bug: mutating prompts between runs while reusing a cached thinking trace from a prior run.
 - **Messages API compaction (beta `compact-2026-09-04`).** A new *on-demand* request — separate from your conversation turns, so it can run in the background — returns a signed summary block covering everything you send it; swap that block in for those messages on your next call. Unlike the threshold-triggered compaction in §15.6, on-demand compaction summarizes the whole request you send it, not just an older portion — there is no automatic "keep the last N turns verbatim" split, so decide what to include before calling it.
@@ -77,10 +93,10 @@ Facts that change harness design, not just the model string:
 **Fable 5.1 forced-tool-call migration, before/after:**
 
 ```python
-# Before (Fable 5, Opus 5, etc.) — 400 on Fable 5.1 / Mythos 5.1:
+# Before (Fable 5, Opus 5, etc.) — 400 on Fable 5.1 / Mythos 5.1 / Opus 5.5:
 resp = client.messages.create(
     model="claude-fable-5-1", tools=[GRADER_TOOL],
-    tool_choice={"type": "tool", "name": "record_verdict"},   # ← 400 on 5.1
+    tool_choice={"type": "tool", "name": "record_verdict"},   # ← 400 on 5.1 and Opus 5.5
     messages=[{"role": "user", "content": judge_prompt}],
 )
 
@@ -223,6 +239,19 @@ frontier = [run_suite(CASES, e) for e in ("low", "medium", "high", "xhigh", "max
 print(json.dumps(frontier, indent=2))
 ```
 
+**A note on the code in this module.** The examples below stay pinned to
+`model="claude-opus-5"` — that model is still Active, and the code is still
+correct as written. `run_suite` above already runs unchanged on
+`claude-opus-5-5` too: swap the model string and it keeps working, because it
+already passes `effort` explicitly on every call. That is the general rule
+for every example in this module — if it sets `output_config={"effort": ...}`
+(or `"format"`) explicitly, as most judge examples here do, only the model
+string needs to change. If you copy an example that does *not* set `effort`
+explicitly (for instance, a bare verification call, §15.9), add
+`output_config={"effort": "high"}` (or whatever value you were implicitly
+relying on) before swapping the model — otherwise the swap silently drops you
+to Opus 5.5's `medium` default, not Opus 5's `high` (§15.3).
+
 An illustrative frontier — and the shape of it is the point:
 
 | Effort | Pass rate | Cost | Latency (p50) | $ per additional point |
@@ -238,6 +267,40 @@ Three readings, all of which people get wrong by default:
 - **The last column is the decision.** Points 71→83 cost 32¢ each; the point from `xhigh` to `max` costs $41.75. Nothing about "we use max effort because quality matters" survives contact with that column.
 - **Sweep down, not up.** On Opus 5, `low` and `medium` are unusually strong — often matching a previous generation's top settings. Prior-generation effort defaults rarely transfer; re-tune them rather than carrying them over.
 - **Choose a starting point, then sweep.** `xhigh` is a defensible capability-first starting point for hard coding/agentic work and `high` for many other tasks, but neither is a universal optimum. Higher effort can reduce total turn count or merely add cost; measure end-to-end task cost, latency, coverage, and success.
+
+### The silent re-baseline: swapping the model swaps the effort default too
+
+Suppose a harness has run unchanged for months: `model="claude-opus-5"`, no
+`effort` set, so every call ran at Opus 5's default, `high`. Someone bumps the
+model string to `claude-opus-5-5` — a one-line change that looks like a
+routine version bump. Nothing else in the harness changes. But Opus 5.5's
+default effort is `medium`, not `high`, so the harness is now silently
+measuring a **different, cheaper configuration** — the model swap changed two
+variables (model *and* effort) while looking like it changed one.
+
+Anthropic's own Opus 5.5 card shows why this matters in practice. On
+CursorBench 4.0, Opus 5.5 scores 57.8% at `max`, 56.0% at `xhigh`/`high`, and
+52.5% at `medium` — a 5.3-point spread across the effort dial alone, on the
+same model. On Terminal-Bench 4.0 (66 tasks, 330 trials, SE ±2.6), it scores
+66.36% at `xhigh` versus 64.8% at `max` — a *drop* going from `xhigh` to
+`max`, "within noise" given the stated standard error. Three lessons follow:
+
+1. **Effort moves scores** by more than many single-digit "model upgrade" deltas — a harness that doesn't pin and log effort can't tell a real capability change from an effort-default change.
+2. **`max` is not automatically best.** On Terminal-Bench 4.0, `max` scored no higher than `xhigh` (the 1.6-point gap is within noise) while spending more; treat `max` as one point on the cost–quality frontier, not the ceiling.
+3. **Vendor card numbers are not your API default.** The headline table is measured at "adaptive thinking at max effort" (card, Table 8.1.A); the Claude API default on Opus 5.5 is `medium`. A harness that reads the card's 89.9 SWE-bench Pro number as "what I'll get by default" is comparing to a configuration it never runs.
+
+Pin and record effort explicitly on every call, regardless of the model's default:
+
+```python
+# Pin effort explicitly and record it in every result row — never rely on the default.
+def pin_effort_and_record(model: str, effort: str, case: dict) -> dict:
+    r = client.messages.create(
+        model=model, max_tokens=8000,
+        output_config={"effort": effort},
+        messages=[{"role": "user", "content": case["prompt"]}],
+    )
+    return {"model": model, "effort": effort, "stop_reason": r.stop_reason}
+```
 
 ### The thinking-disabled trap for eval harnesses
 
@@ -311,6 +374,8 @@ Safety classifiers can decline a request. The response is **HTTP 200** with `sto
 > **A refused judge call is a hole in your data. Scoring it as FAIL manufactures a result that no one measured.**
 
 The consequences compound. Refusals are not uniformly distributed — they cluster in security, biology, and adjacent domains — so silently counting them as failures produces a suite that reports systematically depressed scores **on exactly the categories a safety-relevant eval exists to measure**. You will conclude the model is bad at the thing your harness merely declined to look at.
+
+**Opus 5.5 adds two refusal categories to watch for.** Beyond `cyber`, `stop_details.category` can now also report `bio` (a biology-domain safety classifier) and `reasoning_extraction` (declines an attempt to make the model reproduce its own internal reasoning in the visible response). A judge or eval prompt that asks the model to "show your reasoning" or "explain your chain of thought" as part of the answer can now be declined under `reasoning_extraction` — treat it the same as any other refusal: `UNMEASURED`, not `FAIL`. This module does not assert whether `reasoning_extraction` refusals are excluded from server-side fallback routing; confirm that against the current docs before depending on it.
 
 ```python
 from enum import Enum
@@ -449,6 +514,12 @@ That last line is the one people get wrong: **append `resp.content`, not the ext
 
 > **Record the context-management configuration alongside every long-horizon result, and treat a change to it as a change to the system under test — requiring a re-run of the baseline, not just the candidate.**
 
+### Opus 5.5: thinking-block binding, and a grader-input change
+
+**Thinking-block binding.** On Opus 5.5, a thinking block is bound to the model that produced it *and* to an unedited conversation prefix. Opus 5.5 can replay its own thinking blocks and Opus 5/4.x's; it cannot replay Fable/Mythos blocks, and only Fable 5.1/Mythos 5.1 can replay Opus 5.5's blocks back. If anything before the block — system prompt, tools, or an earlier message — changed since the block was produced, replaying it now 400s by default, for accounts created on/after 2026-08-31 00:00 UTC. For a long-horizon harness this means: keep conversations append-only across a run; push updates through mid-conversation system messages rather than editing history; or, if history must be edited, opt into the beta `thinking-binding-controls-2026-08-01` with `thinking.block_binding.prefix_mismatch_behavior: "drop_block"` so the run degrades (drops the stale block) instead of erroring outright.
+
+**Inter-tool narration is now a grader-input change, not just a UI one.** Text the model previously emitted between tool calls as a `text` block now arrives as a `thinking` block, empty by default (`display: "omitted"`). If your harness has a trajectory judge that reads and scores that narration — "did the agent explain its plan before acting" — that judge now receives empty or summarized text on Opus 5.5 even though nothing about the agent's actual behavior changed. **Re-validate that judge against Opus 5.5 output before trusting a score drop as a capability regression**; the fix, if you need the narration back, is setting `thinking.display` to a value that returns text.
+
 ---
 
 ## 15.7 Memory Is a Contamination Vector
@@ -492,6 +563,8 @@ Two adjacent hygiene rules, both of which have bitten teams:
 
 **Mid-conversation tool changes** (beta `mid-conversation-tool-changes-2026-07-01`, Opus 5+) — add or remove tools between turns via `tool_addition` / `tool_removal` blocks on a `role: "system"` message, without invalidating the cached prefix. This makes **tool-ablation evals** cheap: previously, measuring "how much worse is the agent without the search tool?" meant a separate cold-cache run per configuration.
 
+**Defining tools inline, mid-conversation** (beta `inline-tools-2026-09-15`, Opus 5.5) — a step further than the above: define, change, or version a tool's full schema inside a mid-conversation `role: "system"` message, without touching the top-level `tools` array and without invalidating the prompt cache. This is the cheap way to **A/B-test tool descriptions** — run the shared setup once, cached, then branch into two tool-schema variants and compare downstream tool-selection accuracy, instead of paying for two cold-cache runs.
+
 **The advisor tool** — pair a cheaper executor model with a stronger advisor consulted mid-generation. A natural fit for cascaded judging where you want Haiku-tier throughput with Opus-tier judgment on the hard calls. The advisor model must be at least as capable as the executor, or the request 400s. Note the payload shape differs by advisor: on Opus 5 / Fable 5 the result content is `advisor_redacted_result` carrying `encrypted_content`, not readable `text` — code that reads `.text` unconditionally gets nothing.
 
 **Instrumentation worth capturing on every eval call:**
@@ -522,10 +595,25 @@ That last row matters more than it looks. Under `fallbacks`, a response can be s
 | Effort defaults carried from a prior model | **Silent** | Re-sweep; `low`/`medium` are unusually strong on Opus 5 |
 | Fixed `max_tokens` on judges | **Silent** | Thinking shares the budget now |
 | Rate-limit assumptions | **Silent** | Opus 5 is a separate bucket from Opus 4.x |
-| `tool_choice: "any"` / `"tool"` (Fable 5.1 / Mythos 5.1 only) | **400** | Migrate the forced grader/JSON tool call to structured outputs or strict tool use (§15.1, §15.4) |
+| `tool_choice: "any"` / `"tool"` (Fable 5.1 / Mythos 5.1 / Opus 5.5) | **400** | Migrate the forced grader/JSON tool call to structured outputs or strict tool use (§15.1, §15.4) |
 | Replaying a cached thinking block after mutating the system prompt/tools/earlier messages (Fable 5.1 / Mythos 5.1, accounts created after Aug 31, 2026) | **400** | Don't reuse a cached thinking trace across a changed prompt — re-run rather than replay |
 | Cache-read cost model assumes 0.1× on Fable 5.1 / Mythos 5.1 | **Silent** | Actual rate is 0.025× ($0.25/MTok flat) — re-check any harness cost projection built before Sept 1, 2026 |
 | Harness has no way to cheapen exploration turns without a fresh call | **New capability, not a break** | Per-message `effort` (beta) lets a single cached session mix cheap-effort turns with a high-effort judge turn |
+
+### Opus 5 → Opus 5.5 (a second hop, same discipline)
+
+The move from Opus 5 to Opus 5.5 is a smaller API surface change than Fable 5.1's, but it hits the harness in more places at once — thinking, effort, tool forcing, and thinking-block replay all move together.
+
+| Change | Severity | Action |
+|---|---|---|
+| `thinking: {"type": "disabled"}` at any effort | **400** (Opus 5 allowed this ≤ `high`) | Keep the harness on Opus 5 for any no-thinking ablation; Opus 5.5 has no thinking-off mode |
+| `thinking: {"type": "enabled", "budget_tokens": N}` | **400** | Replace with `output_config.effort` (same fix as the original Opus 5 migration, §15.9 above) |
+| Harness omits `effort` and relied on Opus 5's `high` default | **Silent** | Opus 5.5 defaults to `medium` — pin `effort` explicitly and re-baseline cost *and* quality before comparing to any Opus 5 number (§15.3) |
+| `tool_choice: {"type": "any"}` / `{"type": "tool", ...}` | **400** | Same migration as Fable 5.1/Mythos 5.1: structured outputs or strict tool use (§15.1, §15.4) |
+| Thinking-block binding: replaying a block after the prefix changed | **400** by default (accounts created on/after 2026-08-31) | Append-only conversations, mid-conversation system messages, or `thinking-binding-controls-2026-08-01` with `drop_block` (§15.6) |
+| `computer_20251124` tool schema | **400** on Claude API / Google Cloud | Move to `computer_toolset_20260801` before running a computer-use suite on Opus 5.5 |
+| Inter-tool narration scored by a trajectory judge | **Silent** | Now arrives as an empty/summarized `thinking` block by default — re-validate the judge, don't read the score drop as a capability regression (§15.6) |
+| Switching the judge model itself (e.g. judge moved from Opus 5 to Opus 5.5) | **Silent, and the biggest one** | This is a metric break, not a version bump: re-run judge calibration (κ against human labels) before trusting any score comparison that spans the switch |
 
 **Verification after migration** — one call, three assertions:
 

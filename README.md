@@ -8,7 +8,8 @@
 > release wave — benchmark saturation and leaderboard churn, and new
 > eval-science on chain-of-thought monitorability and judge reliability —
 > with current API behavior, recent model reports, and evaluation practice
-> from primary research and evaluation groups.
+> from primary research and evaluation groups. Refreshed again on
+> **September 23, 2026** for the Claude Opus 5.5 release.
 >
 > **Companion reading:** Hamel Husain's ["Your AI Product Needs Evals"](https://hamel.dev/blog/posts/evals/) and Eugene Yan's ["Evaluating LLM-Evaluators"](https://eugeneyan.com/writing/llm-evaluators/) are useful practitioner introductions to read alongside this guide.
 
@@ -79,6 +80,19 @@ fit the existing chapters, so adding another chapter would duplicate material
 rather than close a learner gap.
 
 ---
+
+## What's New — September 23, 2026 update (Claude Opus 5.5)
+
+This is a delta on top of the September 2026 edition below, centered on
+Claude Opus 5.5 (released Sept 22, 2026):
+
+- **[Module 15](./15-opus5-eval-techniques/) (the core harness update)**: adds Claude Opus 5.5 (`claude-opus-5-5`, $4/$20, cache reads at 0.05×) as Anthropic's recommended default model (adopting it as your judge still requires re-running judge calibration), with Opus 5 now listed as legacy (still Active) — the four breaking API changes (thinking cannot be disabled, forced `tool_choice` rejected, thinking-block binding, `computer_20251124` retired), the default-effort change from `high` to `medium`, the new `bio`/`reasoning_extraction` refusal categories, and a worked example showing that swapping the judge model silently re-baselines the effort setting too.
+- **[Module 05](./05-scaling/) (pricing)**: Opus 5.5 pricing ($4/$20 input/output, cache read $0.20 = 0.05×, fast mode $8/$40), GPT-6 Sol/Luna pricing, and a worked arithmetic example pricing the same judge call on Opus 5 vs. Opus 5.5, uncached and with a cached rubric prefix.
+- **[Module 08](./08-case-studies/) (new Case Study 11)**: "Diffing Two System Cards — How Claude Opus 5.5 Was Evaluated" teaches reading a point-release card by diffing it against its predecessor — score deltas, portfolio churn, benchmark renaming and cross-harness effects, RSP-to-FCF vocabulary, and the card's own disclosure-review practice.
+- **[Module 10](./10-advanced-topics/) (alignment and elicitation)**: the Opus 5.5 card's three verbatim regressions, two new unsafeguarded propensity evals (with the evaluation-awareness confound explained), the Gray Swan indirect-prompt-injection improvement, the 991-transcript sandbagging check, and the reversal on using helpful-only variants for capability elicitation.
+- **[Module 12](./12-eval-training-separation/) & [Module 16](./16-frontier-architectures-and-research-thinking/) (benchmark and index lessons)**: benchmark names are not stable identifiers (FrontierBench v0.1 → Terminal-Bench 4.0), the AECI basket refit that moves prior models' scores, and which leaderboards still had no independent Opus 5.5 entry as of Sept 23.
+- **[Module 11](./11-how-frontier-models-are-trained/) & [Module 13](./13-advancing-ai-research/) (training and the FCF)**: the Opus 5.5 card drops "ASL-" labels in favor of CB-1/CB-2/Autonomy-threat-model tiers under the Frontier Compliance Framework (FCF), new training-time monitoring findings, and the "Claude reviews the card" disclosure example.
+- **[Module 00](./00-prerequisites/), [Module 02](./02-evaluation-methods/), [Module 09](./09-langchain-examples/) & [Module 14](./14-loop-engineering/) (sweep)**: model-id and pricing currency, a third 2026 judge-validation finding, the Fable 5.1/Opus 5.5 forced-tool-call note, and a caution that migrating a loop to Opus 5.5 without pinning effort changes cost per attempt and marginal yield together.
 
 ## What's New in the September 2026 Edition
 
@@ -284,7 +298,7 @@ Week 3: Module 13 (Research Frontier + Project Planning)
 This guide uses:
 - **Python 3.11+**
 - **LangChain / LangGraph** for LLM and agent orchestration
-- **Anthropic API** (Claude Fable 5.1 `claude-fable-5-1`, Fable 5, Opus 5, Sonnet 5, and Haiku 4.5 — Sonnet 5's $2/$10 pricing is standard, not introductory) and **OpenAI API** (GPT-6 Astra `gpt-6-astra`, GPT-5.6 Sol/Terra/Luna, plus pinned smaller models). Reasoning defaults, effort levels, and sampling-parameter support differ by provider and model; record the exact configuration and check current docs (see Module 15)
+- **Anthropic API** (Claude Opus 5.5 `claude-opus-5-5` — Anthropic's recommended default since Sept 22, 2026 — plus Claude Fable 5.1 `claude-fable-5-1`, Fable 5, Opus 5 (now listed as legacy, still Active), Sonnet 5, and Haiku 4.5 — Sonnet 5's $2/$10 pricing is standard, not introductory) and **OpenAI API** (GPT-6 Astra `gpt-6-astra`, GPT-6 Sol `gpt-6-sol` and GPT-6 Luna `gpt-6-luna` (both released Sept 22, 2026), GPT-5.6 Sol/Terra/Luna, plus pinned smaller models). Reasoning defaults, effort levels, and sampling-parameter support differ by provider and model; record the exact configuration and check current docs (see Module 15)
 - **Pydantic** for data validation and structured outputs
 - **Redis/Celery** for distributed processing
 - **GitHub Actions** for CI/CD
@@ -464,6 +478,7 @@ This is a living document, refreshed roughly every 6–8 weeks against the front
 - Shreya Shankar et al. — [Who Validates the Validators? (EvalGen)](https://arxiv.org/abs/2404.12272)
 
 ### System Cards & Transparency Reports (primary sources for this edition)
+- [Claude Opus 5.5 System Card (Sept 22, 2026, 230 pp)](https://www-cdn.anthropic.com/fc1b44717c85dc068bc6ba5024219938094694bd/Claude%20Opus%205.5%20System%20Card.pdf) — diffed against the Opus 5 card in Module 08's Case Study 11; see also the [launch post](https://www.anthropic.com/news/claude-opus-5-5) and ["What's new in Claude Opus 5.5"](https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5) for the API-breaking changes covered in Module 15
 - [Claude Fable 5 / Mythos 5 System Card (June 2026, 319 pp)](https://www.anthropic.com/claude-fable-5-mythos-5-system-card) — the flagship case study in Module 08; capability + RSP/ASL-3 + ~120 pp alignment assessment
 - [Claude Fable 5.1 / Mythos 5.1 launch & system card (Sept 1, 2026, 212 pp)](https://www.anthropic.com/claude-fable-and-mythos-5-1) — same underlying weights as Fable 5/Mythos 5 under two safeguard configurations; addendum in Module 08
 - [Claude Opus 4.8 announcement (May 2026)](https://www.anthropic.com/news/claude-opus-4-8) and [Claude Sonnet 4.6 announcement (Feb 2026)](https://www.anthropic.com/news/claude-sonnet-4-6) — each links to its system card

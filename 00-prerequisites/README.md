@@ -144,6 +144,14 @@ completion = model.generate(prompt + user_message)
 # and policy-relevant trajectory constraints. Treat any exposed rationale as
 # an imperfect artifact, not a faithful window into hidden reasoning. Record
 # the effort/thinking configuration next to every score.
+
+# MODEL CURRENCY (Sept 2026): Anthropic's recommended default since Sept 22
+# is Claude Opus 5.5 (`claude-opus-5-5`), not Opus 5. Two things worth
+# knowing before your first call: thinking cannot be switched off at all
+# (Opus 5 could disable it; Opus 5.5 always thinks), and the API default
+# effort is "medium", not "high" — pin `effort` explicitly so your eval
+# numbers don't move just because the model changed under you. Full
+# breaking-change list: Module 15 §15.1.
 ```
 
 ---
