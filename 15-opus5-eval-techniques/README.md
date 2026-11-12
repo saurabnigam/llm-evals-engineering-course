@@ -50,12 +50,15 @@ Primary references for the changing API claims: [Claude model overview](https://
 
 | Model | ID | Context | Max output | Input / Output per MTok | Where it belongs in an eval stack |
 |---|---|---|---|---|---|
+| Claude Fable 5.2 | `claude-fable-5-2` | 1M | 128K | $8 / $40 (cache read $0.20) | Ceiling-setting; cheaper than Fable 5.1 (released Nov 9, 2026; [what's new](https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2)) |
 | Claude Fable 5.1 | `claude-fable-5-1` | 1M | 128K | $10 / $50 (cache read $0.25) | Ceiling-setting; cheaper to replay long transcripts than Fable 5 because of the 0.025× cache-read rate ([pricing](https://platform.claude.com/docs/en/about-claude/pricing)) |
 | Claude Fable 5 | `claude-fable-5` | 1M | 128K | $10 / $50 | Ceiling-setting: hardest reference judgments, adversarial verification (legacy tier, still active) |
 | **Claude Opus 5.5** | **`claude-opus-5-5`** | **1M** | **128K** | **$4 / $20 (cache read $0.20)** | **Anthropic's recommended default since Sept 22; adopting it as your judge is a measurement change — re-run judge calibration first (§15.4)** |
 | Claude Opus 5 | `claude-opus-5` | 1M | 128K | $5 / $25 | A/B baseline; last Opus that can disable thinking (≤ `high`) (listed as legacy, still Active) |
 | Claude Opus 4.8 | `claude-opus-4-8` | 1M | 128K | $5 / $25 | Fallback target on refusals; A/B baseline |
+| Claude Sonnet 5.5 | `claude-sonnet-5-5` | 1M | 128K | $2 / $10 (cache read $0.10) | High-volume judging; re-calibrate before switching from Sonnet 5 (released Sept 28, 2026; [overview](https://platform.claude.com/docs/en/models/sonnet-5-5/overview)) |
 | Claude Sonnet 5 | `claude-sonnet-5` | 1M | 128K | $2 / $10 | High-volume judging where κ against humans holds up |
+| Claude Haiku 5.5 | `claude-haiku-5-5` | 1M | 128K | $0.10 / $0.50 up to 100,000 prompt tokens; $0.50 / $2.50 above (cache read $0.01 / $0.05) | First-stage screen at a tenth of Haiku 4.5's price; see Module 05 section 5.6c.7 (released Oct 7, 2026; [overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview)) |
 | Claude Haiku 4.5 | `claude-haiku-4-5` | 200K | 64K | $1 / $5 | First-stage screen in a cascade; deterministic-ish rule checks |
 
 Facts that change harness design, not just the model string:
@@ -108,11 +111,25 @@ resp = client.messages.create(
 )
 ```
 
+### What changes on Sonnet 5.5, Haiku 5.5 and Fable 5.2 (Sept 28 – Nov 9, 2026)
+
+Nov 11, 2026 update. Sources: the [Claude Platform release notes](https://platform.claude.com/docs/en/release-notes/overview), the [Sonnet 5.5 overview](https://platform.claude.com/docs/en/models/sonnet-5-5/overview), the [Haiku 5.5 overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview), the [Fable 5.2 what's new page](https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2) and the [refusals page](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback).
+
+- **Sonnet 5.5 rejects `thinking: disabled`.** To turn off up-front thinking, send `thinking: {"type": "between_tools"}` at `high` effort or below. `"disabled"` is rejected. Forced `tool_choice` (`any` or `tool`) and `temperature`, `top_p`, `top_k` also return 400. *Why a harness cares:* a thinking-off ablation or a forced-tool judge written for Sonnet 5 fails on its first request. Re-run judge calibration (§15.4) after you change it.
+- **Haiku 5.5 price depends on prompt length.** Prompts up to 100,000 tokens cost $0.10 / $0.50 per MTok. Longer prompts cost $0.50 / $2.50. Its tokenizer produces about 30% more tokens than Haiku 4.5 for the same text. *Why a harness cares:* a flat per-token cost model is wrong for long-context evals. And the same text is about 30% more tokens, so for identical text the effective price is nearer 0.13× Haiku 4.5's than 0.10× (our arithmetic: 0.10 × 1.3).
+- **Haiku 5.5 thinks by default, at `medium` effort.** Thinking is adaptive and on by default, and it is the first Haiku with effort levels. `budget_tokens`, sampling parameters and assistant prefill can each return 400. Thinking tokens bill as output tokens. *Why a harness cares:* a Haiku screen that ran without thinking now spends output tokens on thinking, and a prefill-based parser breaks. Set effort on purpose and check `max_tokens` (§15.3).
+- **Fable 5.2 checks thinking-block prefixes on every account.** If you edit `system`, `tools` or earlier messages and resend a 5.2 thinking block, the request returns 400 unless you set the beta header `thinking-binding-controls-2026-08-01` with `prefix_mismatch_behavior: "drop_block"`. The old account-age limit no longer applies. *Why a harness cares:* a harness that edits history between turns, or replays stored transcripts with edits, now gets a 400 (§15.6).
+- **Only Fable 5.2 and Mythos 5.2 read 5.2 thinking blocks.** Any other model, including a fallback model, drops them silently. *Why a harness cares:* a cross-model replay or a fallback run sees a transcript without the reasoning, so the two runs are not the same test.
+- **Refusals can cost money.** Since Sept 24, 2026, a refusal that arrives before any output is billed when its category is `bio`, `frontier_llm` or `reasoning_extraction`. Sonnet 5.5 and Haiku 5.5 also carry safety classifiers that can decline. *Why a harness cares:* eval prompts about model training or reasoning dumps can fail and still bill. Log refusals with their category (§15.4).
+- **API version 2026-10-21 removes sampling parameters on every model.** It shipped on Oct 21, 2026 with new SDK majors (Python 2.0.0, TypeScript 1.0.0, Go 2.0.0, Java 3.0.0, Ruby 2.0.0). On this version `temperature`, `top_p` and `top_k` return 400 on every model. *Why a harness cares:* a pinned-sampling harness breaks on upgrade, and the SDK majors carry breaking changes of their own. Pin the SDK and the API version together.
+
 ---
 
 ## 15.2 Why One Run Is Not Evidence
 
 For years, the first line of every eval harness was `temperature=0`, and the second was a comment claiming this made runs reproducible. Both are now gone: **`temperature`, `top_p`, and `top_k` are rejected with a 400** on Opus 5, Opus 4.8/4.7, Fable 5, and (for non-default values) Sonnet 5.
+
+Nov 11, 2026 update: Sonnet 5.5, Haiku 5.5 and Fable 5.2 reject the three parameters too, and on API version 2026-10-21 they are rejected on every model ([release notes](https://platform.claude.com/docs/en/release-notes/overview)).
 
 This is less of a loss than it looks, because `temperature=0` never guaranteed
 identical outputs; it reduced variance without eliminating it. It did not make
@@ -454,6 +471,8 @@ Four independent multipliers, all composable. For 10,000 judge calls at 2,000 in
 | Haiku 4.5 screen only | $35.00 | 20% |
 | Cascade (Haiku → Opus 5 on 20%) | $70.00 | 40% |
 | **Cascade + caching + batch** | **$21.50** | **12%** |
+
+**Nov 2026 update (as of Nov 11, 2026):** Haiku 5.5 at $0.10 / $0.50 per MTok changes this table. The re-priced version (naive Opus 5.5 $140.00; cascade + caching + batch $9.38) and its caveats are in [Module 05 section 5.6c.7](../05-scaling/README.md).
 
 **1. Prompt caching, with the prefix designed for it.** Caching is a *prefix match* — one changed byte invalidates everything after it. For a judge, that means: rubric and instructions first (stable, cached), the case under evaluation last (varies every call).
 

@@ -11,7 +11,9 @@
 > eval-science on chain-of-thought monitorability and judge reliability —
 > with current API behavior, recent model reports, and evaluation practice
 > from primary research and evaluation groups. Refreshed again on
-> **September 23, 2026** for the Claude Opus 5.5 release.
+> **September 23, 2026** for the Claude Opus 5.5 release, and on
+> **November 11, 2026** with a platform-level treatment of running evals at
+> scale and the Sonnet 5.5 / Haiku 5.5 / Fable 5.2 release wave.
 >
 > **Companion reading:** Hamel Husain's ["Your AI Product Needs Evals"](https://hamel.dev/blog/posts/evals/) and Eugene Yan's ["Evaluating LLM-Evaluators"](https://eugeneyan.com/writing/llm-evaluators/) are useful practitioner introductions to read alongside this guide.
 
@@ -24,7 +26,7 @@
 | [02-evaluation-methods](./02-evaluation-methods/) | Core Evaluation Approaches + Psychometric & Dynamic Evals | 4 hours | Intermediate |
 | [03-pipeline-architecture](./03-pipeline-architecture/) | Building Robust Pipelines | 3 hours | Intermediate |
 | [04-cold-start](./04-cold-start/) | Bootstrapping Evaluations | 2 hours | Advanced |
-| [05-scaling](./05-scaling/) | Cost & Performance Optimization | 3 hours | Advanced |
+| [05-scaling](./05-scaling/) | Cost & Performance Optimization + Evals as a Platform | 4 hours | Advanced |
 | [06-feedback-loops](./06-feedback-loops/) | Continuous Improvement | 3 hours | Advanced |
 | [07-cicd-integration](./07-cicd-integration/) | Production Integration | 4 hours | Expert |
 | [08-case-studies](./08-case-studies/) | Worked Composites + Sourced Case Studies | 2 hours | Intermediate |
@@ -37,7 +39,7 @@
 | **[15-opus5-eval-techniques](./15-opus5-eval-techniques/)** | **Evaluating in the Opus 5 Era: API-Native Eval Techniques** | **2 hours** | **Advanced** |
 | **[16-frontier-architectures-and-research-thinking](./16-frontier-architectures-and-research-thinking/)** | **Reading the Frontier: DeepSeek-V4, Kimi K3, GPT-5.6 — and How to Think Like a Researcher** | **2 hours** | **All levels** |
 
-**Total Study Time: ~48 hours**
+**Total Study Time: ~49 hours**
 
 ---
 
@@ -72,6 +74,7 @@ state the next discriminating check when attribution needs more evidence.
 | Contamination, private/post-cutoff holdouts, dynamic evals, memory leakage | [12](./12-eval-training-separation/), [15](./15-opus5-eval-techniques/) |
 | Retry/verifier value, marginal yield, regressions, loop cost | [14](./14-loop-engineering/) |
 | Current effort, refusal, structured-output, caching, batch, migration behavior | [15](./15-opus5-eval-techniques/) |
+| Running evals as a shared platform: idempotent work units, quota-aware scheduling, batch and sandbox lanes, paired statistics, multi-tenancy | [05 §5.6c](./05-scaling/) |
 | Multimodal generation without one reference answer | [08 Case 10](./08-case-studies/#case-study-10-uber-eats-multimodal-image-agent--evaluating-generation-with-no-ground-truth) |
 | Architecture/vendor claims, reproductions, containment, research inference | [13](./13-advancing-ai-research/), [16](./16-frontier-architectures-and-research-thinking/) |
 
@@ -82,6 +85,20 @@ fit the existing chapters, so adding another chapter would duplicate material
 rather than close a learner gap.
 
 ---
+
+## What's New — November 11, 2026 update (evals at scale; Sonnet 5.5, Haiku 5.5, Fable 5.2)
+
+This is a delta on top of the September editions below. It has one new
+section and one currency sweep.
+
+- **[Module 05 §5.6c](./05-scaling/) (new: Evals as a Platform)**: the scalable design, for teams that have outgrown a worker pool. It covers the three limits that appear at scale (provider quota, statistical signal, trust between teams); a content-addressed unit of work with a ledger, so re-runs, resumes and re-grades stop paying twice; scheduling against tokens per minute instead of queue depth, with the arithmetic showing that prompt caching buys throughput as well as money; batch, sandbox and online lanes; Anthropic's measurement of how container resource limits move agent scores; paired differences, clustered errors and sample-size planning from Miller's "Adding Error Bars to Evals"; multi-tenancy and cost attribution; and a build-or-adopt table (script, Inspect eval sets, or a Hawk-style platform). Three new code examples carry six new tests.
+- **[Module 05 §5.6c.7](./05-scaling/) & [Module 15](./15-opus5-eval-techniques/) (economics)**: Claude Haiku 5.5 at $0.10 / $0.50 per MTok makes the screening tier 2.5% of the arbiter's cost, down from 20%. The re-priced cascade table (naive Opus 5.5 $140.00 → cascade + caching + batch $9.38 for 10,000 judge calls) shows that the escalation rate, not the screen, is now the lever. Four caveats come with it: thinking on by default, a tokenizer that counts about 30% more tokens, a price step above 100,000 prompt tokens, and billed refusals.
+- **[Module 15](./15-opus5-eval-techniques/) (API changes)**: Sonnet 5.5 (Sept 28), Haiku 5.5 (Oct 7) and Fable 5.2 (Nov 9) added to the model table, with the changes that break a harness: Sonnet 5.5 rejects `thinking: disabled`; Fable 5.2 applies the thinking-block history check to every account; API version `2026-10-21` rejects sampling parameters on every model.
+- **[Module 03](./03-pipeline-architecture/) (tooling, now dated November 2026)**: Inspect's adaptive connection limits and early-stopping hook; judge defaults that changed under their users (LangSmith, `verifiers`), which is why the judge model must be pinned; Harbor's failure classification; the Langfuse Nov 16 cutover; the OpenAI Evals shutdown on Nov 30; METR's Hawk and UK AISI's Transect as new rows; and the OpenTelemetry GenAI conventions' status (still Development, moved to their own repository).
+- **[Module 12](./12-eval-training-separation/) (rulers that changed)**: Terminal-Bench 4.1 changed its verifiers, the Artificial Analysis index is at v5.0.1, and the Epoch Capabilities Index moved to a Bayesian model.
+- **[Module 02](./02-evaluation-methods/) (judge and agent findings)**: Arena's measurement of judge self-preference, strict success versus goal attainment for agents (BizAgentBench), and scoring agent behaviour alongside team outcomes.
+
+**Not covered in this update:** the Sonnet 5.5, Haiku 5.5 and Fable 5.2 system cards were not read (Case Studies in Module 08 and the alignment material in Modules 10, 11 and 13 are unchanged), and Modules 00, 01, 04, 06–11, 13, 14 and 16 received no content review beyond two one-line status corrections (in Modules 06 and 09).
 
 ## What's New — September 23, 2026 update (Claude Opus 5.5)
 
@@ -310,12 +327,12 @@ This guide uses:
 
 | Category | Tools |
 |----------|-------|
-| **Eval frameworks** | [Inspect AI](https://inspect.aisi.org.uk/) (UK AISI — agent-first, sandboxed, 200+ benchmarks), [OpenAI Evals](https://github.com/openai/evals) (hosted platform [sunsetting](https://developers.openai.com/api/docs/deprecations): read-only Oct 31, 2026, shut down Nov 30, 2026 — OpenAI points early-stage users to Datasets, durable path is Promptfoo), [Promptfoo](https://www.promptfoo.dev/), [DeepEval](https://github.com/confident-ai/deepeval), [Google Agent + Model Evaluations](https://developers.googleblog.com/agent-and-model-evaluations-in-gemini-enterprise-agent-platform-are-now-ga/) (GA Jul 31, 2026 — Gemini Enterprise Agent Platform), Claude Code [`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) (Sept 2026 — proposes cases/graders, runs each 3x with and 3x without the plugin) |
+| **Eval frameworks** | [Inspect AI](https://inspect.aisi.org.uk/) (UK AISI — agent-first, sandboxed, 200+ benchmarks), [OpenAI Evals](https://github.com/openai/evals) (hosted platform [sunsetting](https://developers.openai.com/api/docs/deprecations): read-only since Oct 31, 2026, shutdown scheduled for Nov 30, 2026 — OpenAI points early-stage users to Datasets, durable path is Promptfoo), [Promptfoo](https://www.promptfoo.dev/), [DeepEval](https://github.com/confident-ai/deepeval), [Google Agent + Model Evaluations](https://developers.googleblog.com/agent-and-model-evaluations-in-gemini-enterprise-agent-platform-are-now-ga/) (GA Jul 31, 2026 — Gemini Enterprise Agent Platform), Claude Code [`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) (Sept 2026 — proposes cases/graders, runs each 3x with and 3x without the plugin) |
 | **Hosted eval + tracing** | [LangSmith](https://docs.langchain.com/langsmith/evaluation), [Braintrust](https://www.braintrust.dev/), [Arize Phoenix](https://phoenix.arize.com/) (evals 3.6.0, Aug 28 2026, adds a session-level PII evaluator), [Weights & Biases Weave](https://wandb.ai/site/weave), [Langfuse](https://langfuse.com/) ([stable evaluator API](https://langfuse.com/changelog/2026-08-27-stable-evaluator-api), Aug 2026 — old endpoints migrate by Nov 16, 2026), [Helicone](https://www.helicone.ai/) |
 | **RAG-specific** | [RAGAS](https://docs.ragas.io/), [TruLens](https://www.trulens.org/), [DeepEval RAG metrics](https://github.com/confident-ai/deepeval) |
-| **Tracing standards** | [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), [OpenLLMetry / Traceloop](https://github.com/traceloop/openllmetry) |
+| **Tracing standards** | [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) (still Development status as of Nov 2026; now in [their own repository](https://github.com/open-telemetry/semantic-conventions-genai)), [OpenLLMetry / Traceloop](https://github.com/traceloop/openllmetry) |
 | **Safety / red-team** | [Inspect Evals safety suite](https://inspect.aisi.org.uk/evals/), [Garak](https://github.com/NVIDIA/garak), [PyRIT](https://github.com/Azure/PyRIT), Anthropic's [SHADE-Arena](https://alignment.anthropic.com/2025/strengthening-red-teams/) |
-| **Public leaderboards** | [Arena (formerly LMArena/LMSYS)](https://lmarena.ai/) — note "The Leaderboard Illusion" critique; [Epoch AI Benchmarking Hub + Capabilities Index (ECI)](https://epoch.ai/benchmarks/eci); [Artificial Analysis Intelligence Index](https://artificialanalysis.ai/methodology/intelligence-benchmarking) (recomposed twice in Sept 2026 — v4.2 then v4.3 — after AA and Epoch's ECI ranked GPT-6 Astra very differently; see [Module 12](./12-eval-training-separation/)); [SEAL / SEAL Showdown (Scale)](https://scale.com/leaderboard); [Terminal-Bench 3.0](https://www.tbench.ai/news/terminal-bench-3-0) (Aug 24, 2026 — replaces the saturated 2.1 suite), [LiveBench](https://livebench.ai/), [SWE-bench Verified/Pro](https://www.swebench.com/), [ARC-AGI-3 leaderboard](https://arcprize.org/leaderboard), [FrontierMath Erdős](https://epoch.ai/latest/announcing-frontiermath-erdos), [Agents' Last Exam](https://agents-last-exam.org/) |
+| **Public leaderboards** | [Arena (formerly LMArena/LMSYS)](https://arena.ai/) — note "The Leaderboard Illusion" critique; [Epoch AI Benchmarking Hub + Capabilities Index (ECI)](https://epoch.ai/benchmarks/eci); [Artificial Analysis Intelligence Index](https://artificialanalysis.ai/methodology/intelligence-benchmarking) (v5.0.1 as of Nov 11, 2026; recomposed twice in Sept 2026 — v4.2 then v4.3 — after AA and Epoch's ECI ranked GPT-6 Astra very differently; see [Module 12](./12-eval-training-separation/)); [SEAL / SEAL Showdown (Scale)](https://scale.com/leaderboard); [Terminal-Bench 3.0](https://www.tbench.ai/news/terminal-bench-3-0) (Aug 24, 2026 — replaces the saturated 2.1 suite), [LiveBench](https://livebench.ai/), [SWE-bench Verified/Pro](https://www.swebench.com/), [ARC-AGI-3 leaderboard](https://arcprize.org/leaderboard), [FrontierMath Erdős](https://epoch.ai/latest/announcing-frontiermath-erdos), [Agents' Last Exam](https://agents-last-exam.org/) |
 
 ---
 
@@ -2819,7 +2836,7 @@ The mirror failure is just as expensive. Suppose prompt-iteration gets TPR to 90
 
 #### Three 2026 findings that change how you validate a judge
 
-The TPR/TNR loop above assumes the judge's verdict tracks the *response*. Three papers from this quarter say that assumption needs its own test:
+The TPR/TNR loop above assumes the judge's verdict tracks the *response*. Three papers from this quarter say that assumption needs its own test. A fourth finding, added in November 2026, follows them:
 
 1. **Rubric-artifact leakage.** A classifier trained on the rubric text alone — never shown the response being graded — predicts the judge's verdict at non-trivial accuracy ([arXiv 2609.02942](https://arxiv.org/html/2609.02942), Sept 2026). Some of what looks like judge "signal" is just rubric wording correlating with your label distribution, not the response being graded. Add a **rubric-only baseline** to every judge validation: if a response-blind model beats the majority-class rate by much, the rubric is leaking, not the judge grading.
 
@@ -2839,6 +2856,7 @@ if leak_acc > majority_rate + 0.05:
 
 2. **Reliability ≠ validity.** Judge meta-evaluations over-weight raw human agreement as the headline metric ([arXiv 2606.19544](https://arxiv.org/html/2606.19544v1)). A judge can be highly self-consistent (good κ, good TPR/TNR) and still be biased in ways the rubric wording predicts (finding 1 above) — agreement and validity are different claims. Where the provider exposes logprobs, report judge **calibration** — ECE or Brier score — as a second axis alongside TPR/TNR/κ, not a replacement for them.
 3. **Self-consistency is not the same claim as human agreement.** A study of two small open judges — LLaMA-3-8B and Qwen2.5-7B — found near-perfect exact self-consistency (97.3% and 92.3%: the judge gave the same verdict on a repeat call almost every time) but only weak correlation with human ratings (r = 0.275 and r = 0.340) ([arXiv 2609.13824](https://arxiv.org/abs/2609.13824), "When Consistency Does Not Mean Reliability," Sept 2026). A judge that agrees with itself is not evidence that it agrees with a human — self-consistency and TPR/TNR-against-humans are two different measurements, and only the second one calibrates the judge. Run both, and don't let a high self-consistency number substitute for step 3 of the loop above.
+4. **Judges prefer their own answers (Nov 2026 addition).** Arena's "Self-Preference of AI Judges" (Sept 30, 2026) reports: "LLM judges prefer their own responses 70% more often than humans do." ([arena.ai/blog](https://arena.ai/blog)). Consequence: when the comparison is close, do not grade a model with a judge from the same family. Use a judge from another family, or a small jury.
 
 ---
 
@@ -3491,6 +3509,11 @@ Three practice rules from the same playbook:
 2. **Grader hierarchy:** deterministic/code graders where possible → LLM graders where necessary → humans judiciously (calibration and gold standards).
 3. **Read the transcripts. Manual review is non-negotiable.** An internal Anthropic run scored Opus 4.5 at 42% on a benchmark until *harness* bugs were fixed — then 95%, same model. If you never read trajectories, you can't tell a model failure from an eval failure.
 
+**Nov 2026 additions on scoring agents:**
+
+- **Outcome scores can hide invalid runs (Oct 14, 2026).** BizAgentBench ([arXiv 2610.20424](https://arxiv.org/abs/2610.20424)) finds that "outcome-based evaluation can mask invalid execution." One model scored 42.0% goal attainment but 32.7% strict success. Report constraint-respecting success beside goal success.
+- **Measure behavior and group outcomes together (Nov 11, 2026).** Anthropic's "Worse Together" ([post](https://alignment.anthropic.com/2026/worse-together/)) says "evaluations should measure agent behavior alongside group outcomes, since each misses something on its own." It studies multi-user, multi-agent teams. If your agents work in a team, score the individual agent's behavior and the team's result.
+
 **Reliability: pass@k vs pass^k.** Leaderboards report pass@k (≥1 success in k trials). Deployed agents need **pass^k** (*all* k trials succeed) — introduced by tau-bench, which found GPT-4o pass^8 < 25% in retail ([arXiv 2406.12045](https://arxiv.org/abs/2406.12045)):
 
 ```python
@@ -3562,7 +3585,7 @@ Reasoning models perform additional internal computation before the final answer
 | Fast prompt A/B in YAML; red-team probes | [Promptfoo](https://www.promptfoo.dev/) (acquisition by OpenAI announced Mar 2026; remains open source — [announcement](https://openai.com/index/openai-to-acquire-promptfoo/)) |
 | Reference framework, model registry | [OpenAI Evals](https://github.com/openai/evals) |
 | Adversarial / red-team probes | [Garak](https://github.com/NVIDIA/garak), [PyRIT](https://github.com/Azure/PyRIT) |
-| Tracing standard | [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), [OpenLLMetry](https://github.com/traceloop/openllmetry) |
+| Tracing standard | [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) (as of Nov 11, 2026: still Development status, moved to [semantic-conventions-genai](https://github.com/open-telemetry/semantic-conventions-genai); treat attribute names as unstable), [OpenLLMetry](https://github.com/traceloop/openllmetry) |
 
 ### 2.7.8 Worked Examples
 
@@ -5129,7 +5152,7 @@ def faq_pipeline():
 
 Emit GenAI-conventions traces so the same evaluator works against Phoenix, Langfuse, LangSmith, or Braintrust by swapping the OTel exporter — no code changes.
 
-The [OTel GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) became the de facto trace schema for LLM systems in 2025–2026, and they matter to pipeline design because your eval pipeline and your production observability can now share one span format. The taxonomy ([OTel GenAI observability blog, 2026](https://opentelemetry.io/blog/2026/genai-observability/); [agent-spans spec](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/)):
+The [OTel GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) became the de facto trace schema for LLM systems in 2025–2026, and they matter to pipeline design because your eval pipeline and your production observability can now share one span format. As of Nov 11, 2026 the conventions are still in Development status and have moved to the [semantic-conventions-genai repository](https://github.com/open-telemetry/semantic-conventions-genai), so treat attribute names as unstable. The taxonomy ([OTel GenAI observability blog, 2026](https://opentelemetry.io/blog/2026/genai-observability/); [agent-spans spec](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/)):
 
 ```
 invoke_agent  (top-level agent span)
@@ -5241,27 +5264,29 @@ The four examples above cover the **deployment shapes** you will actually encoun
 
 ---
 
-## 3.6 Tooling Landscape (mid-2026)
+## 3.6 Tooling Landscape (November 2026)
 
 You will rarely build every box in the 3.1 diagram yourself. What changed in 2025–2026, tool by tool:
 
 | Tool | What changed 2025–2026 | Source |
 |---|---|---|
-| **Inspect AI** (UK AISI) | 200+ prebuilt evals in `inspect_evals`; agent/multi-agent support, sandboxing, ControlArena; Bayesian evaluator-reliability stats; community-eval registry with automated review from May 2026; Claude Opus 5 support (computer use, code exec, `reasoning_effort="none"`) landed in v0.3.250 (28 Jul 2026) | [inspect.aisi.org.uk](https://inspect.aisi.org.uk/), [inspect_evals](https://github.com/UKGovernmentBEIS/inspect_evals), [changelog](https://inspect.aisi.org.uk/CHANGELOG.html) |
-| **LangSmith** | Align Evals judge-calibration loop (Jul 2025); Insights Agent failure clustering (GA Oct 2025) | [Align Evals](https://blog.langchain.com/introducing-align-evals/) |
-| **Braintrust** | Loop (clusters log failures, generates scorers from plain English); CI GitHub Action with merge blocking; remote evals | [braintrust.dev](https://www.braintrust.dev/) |
-| **Langfuse** (OSS) | Managed LLM-as-judge evaluators on traces/experiments; observation-level judge evals (Feb 2026) for per-tool-call precision; OTel integration; stable evaluator API (Aug 2026) — old "unstable" endpoints must migrate by Nov 16, 2026 | [docs](https://langfuse.com/docs/evaluation/evaluation-methods/llm-as-a-judge), [changelog](https://langfuse.com/changelog/2026-02-13-observation-level-evals), [stable API](https://langfuse.com/changelog/2026-08-27-stable-evaluator-api) |
-| **Arize Phoenix** (OSS) | OpenTelemetry-native tracing + LLM-judge evals; the OTel-first option; PII Detection evaluator (screens conversation turns, tool calls/results, and retrieved content for leaked personal data) shipped in arize-phoenix-evals 3.6.0 (Aug 28, 2026) | [comparison](https://www.comet.com/site/blog/llm-evaluation-frameworks/), [release notes](https://arize.com/docs/phoenix/release-notes/09-2026/09-01-2026-github-issues-pii-detection-and-client-updates) |
+| **Inspect AI** (UK AISI) | 200+ prebuilt evals in `inspect_evals`; agent/multi-agent support, sandboxing, ControlArena; Bayesian evaluator-reliability stats; community-eval registry with automated review from May 2026; Claude Opus 5 support (computer use, code exec, `reasoning_effort="none"`) landed in v0.3.250 (28 Jul 2026). **Nov 2026:** connections are adaptive by default (max 100, start 20) ([parallelism](https://inspect.aisi.org.uk/parallelism.html)); `eval_set` tops up tasks whose dataset grew (0.3.270); Python 3.11 is the minimum (0.3.281); Docker sandboxes block writable host mounts by default (0.3.280); an early-stopping hook lets a task skip samples or epochs based on results so far ([early stopping](https://inspect.aisi.org.uk/early-stopping.html)) | [inspect.aisi.org.uk](https://inspect.aisi.org.uk/), [inspect_evals](https://github.com/UKGovernmentBEIS/inspect_evals), [changelog](https://inspect.aisi.org.uk/CHANGELOG.html) |
+| **LangSmith** | Align Evals judge-calibration loop (Jul 2025); Insights Agent failure clustering (GA Oct 2025). **Nov 2026:** creating or updating a judge returns HTTP 400 unless its prompt has a structured output schema with feedback fields (Nov 2, 2026); the default model for new OpenAI judges changed from `gpt-6.1-sol` to `gpt-6-luna` (Nov 9, 2026), so pin the judge model | [Align Evals](https://blog.langchain.com/introducing-align-evals/), [self-hosted changelog](https://docs.langchain.com/langsmith/self-hosted-changelog) |
+| **Braintrust** | Loop (clusters log failures, generates scorers from plain English); CI GitHub Action with merge blocking; remote evals. **Nov 2026:** scorer spans carry `span_attributes.scorer_id`, which gives per-scorer cost | [braintrust.dev](https://www.braintrust.dev/), [changelog](https://docs.braintrust.dev/changelog) |
+| **Langfuse** (OSS) | Managed LLM-as-judge evaluators on traces/experiments; observation-level judge evals (Feb 2026) for per-tool-call precision; OTel integration; stable evaluator API (Aug 2026) — old "unstable" endpoints must migrate by Nov 16, 2026. **Nov 2026:** as of Nov 11 the Nov 16, 2026 cutover is unchanged. Cloud becomes v4-only, and trace-level evaluators stop running, so move to observation-level evaluators ([compatibility](https://langfuse.com/docs/compatibility)) | [docs](https://langfuse.com/docs/evaluation/evaluation-methods/llm-as-a-judge), [changelog](https://langfuse.com/changelog/2026-02-13-observation-level-evals), [stable API](https://langfuse.com/changelog/2026-08-27-stable-evaluator-api) |
+| **Arize Phoenix** (OSS) | OpenTelemetry-native tracing + LLM-judge evals; the OTel-first option; PII Detection evaluator (screens conversation turns, tool calls/results, and retrieved content for leaked personal data) shipped in arize-phoenix-evals 3.6.0 (Aug 28, 2026). **Nov 2026:** phoenix-evals 3.10.0 (Nov 10, 2026); phoenix-client 8.0.0 and phoenix-otel 3.0.0 are breaking releases (Nov 11, 2026) ([releases](https://github.com/Arize-ai/phoenix/releases)) | [comparison](https://www.comet.com/site/blog/llm-evaluation-frameworks/), [release notes](https://arize.com/docs/phoenix/release-notes/09-2026/09-01-2026-github-issues-pii-detection-and-client-updates) |
 | **W&B Weave** | Rebuilt for production agents: online evaluations on live traffic (preview), Guardrails scorers (toxicity, PII, hallucination) | [announcement](https://wandb.ai/wandb_fc/product-announcements-fc/reports/New-in-W-B-Weave-Observability-and-continuous-improvement-for-production-agents--VmlldzoxNzAzMTcxNg) |
-| **DeepEval** (Confident AI) | "Pytest for LLMs"; DAG metric (deterministic LLM decision trees with hard-coded leaf scores); conversational metrics | [docs](https://deepeval.com/docs/metrics-introduction) |
-| **Promptfoo** | Security/red-team focus; **OpenAI announced acquisition Mar 9, 2026** (stays open source, integrates into OpenAI Frontier) | [openai.com](https://openai.com/index/openai-to-acquire-promptfoo/) |
-| **Harbor** | Container-based agent rollouts; official Terminal-Bench 2.0 harness; drives Claude Code, Codex CLI, OpenHands | [harborframework.com](https://harborframework.com/docs/running-tbench) |
-| **OpenAI Evals** | Platform being retired: read-only Oct 31, 2026, shut down Nov 30, 2026; OpenAI points early-stage users to the new lightweight "Datasets" feature (five grader types) and treats Promptfoo (which it now owns) as the durable path — concrete Evals-equivalent tooling inside Promptfoo itself is UNVERIFIED as of Sept 17, 2026 | [deprecations](https://developers.openai.com/api/docs/deprecations) |
+| **DeepEval** (Confident AI) | "Pytest for LLMs"; DAG metric (deterministic LLM decision trees with hard-coded leaf scores); conversational metrics. **Nov 2026:** v4.2.2 introduces support for Jev (the v4.2.4 notes, Sept 22, 2026, repeat it), an experimental, opt-in decision model for verdicts (it does not generate text). The vendor's performance claims are not independently replicated | [docs](https://deepeval.com/docs/metrics-introduction), [releases](https://github.com/confident-ai/deepeval/releases) |
+| **Promptfoo** | Security/red-team focus; **OpenAI announced acquisition Mar 9, 2026** (stays open source, integrates into OpenAI Frontier). **Nov 2026:** 0.124.0 (Oct 6, 2026) fails the exit code when a target error stops the eval; 0.125.0 (Oct 23, 2026) discloses cache-hit rows in the eval summary | [openai.com](https://openai.com/index/openai-to-acquire-promptfoo/), [releases](https://github.com/promptfoo/promptfoo/releases) |
+| **Harbor** | Container-based agent rollouts; official Terminal-Bench 2.0 harness; drives Claude Code, Codex CLI, OpenHands. **Nov 2026:** docs now live at docs.harborframework.com; v0.25.0 (Oct 25, 2026) adds an error policy table that classifies trial failures, plus `harbor lint`; v0.24.0 (Oct 5, 2026) stops scoring a missing key or column as a match | [harborframework.com](https://harborframework.com/docs/running-tbench), [docs](https://docs.harborframework.com/), [releases](https://github.com/harbor-framework/harbor/releases) |
+| **OpenAI Evals** | Platform retiring: existing evals went read-only on Oct 31, 2026, and the dashboard and API are scheduled to shut down on Nov 30, 2026 (status as of Nov 11, 2026); OpenAI's deprecations page names Promptfoo as the migration path. An earlier edition of this row said OpenAI points early-stage users to a lightweight "Datasets" feature with five grader types; the deprecations page does not state that as of Nov 11, 2026, so treat it as UNVERIFIED. Whether Promptfoo offers concrete Evals-equivalent tooling is also UNVERIFIED as of Nov 11, 2026 | [deprecations](https://developers.openai.com/api/docs/deprecations) |
 | **Google Gemini Enterprise Evaluations** | Agent + Model Evaluations reached GA Jul 31, 2026 in the Gemini Enterprise Agent Platform: one engine spanning dev-time and production, adaptive per-prompt rubrics, trajectory metrics, drift alerts | [Google Cloud blog](https://developers.googleblog.com/agent-and-model-evaluations-in-gemini-enterprise-agent-platform-are-now-ga/) |
+| **METR Hawk** | Open-source platform that runs Inspect evals at scale on AWS. It reads a YAML config, then provisions isolated Kubernetes pods, manages LLM API credentials, streams logs and stores results in a PostgreSQL warehouse. METR says it uses Inspect and Hawk, and describes Vivaria as its previous platform (as of Nov 11, 2026). No scale numbers are documented in the README | [Hawk](https://github.com/METR/hawk), [METR](https://metr.org/measuring-autonomous-ai-capabilities/) |
+| **Transect** (UK AISI) | Open-source package on Inspect Scout (Oct 7, 2026). It links LLM-generated transcript labels to evidence and shows where judges disagree. AISI's point: agreement does not prove a label is correct, but disagreement tells you where to look closer | [AISI blog](https://www.aisi.gov.uk/blog/transect-making-large-scale-agentic-evaluations-easier-to-understand) |
 
 The stack pattern that recurs across 2026 comparisons: an **OSS framework (DeepEval / Promptfoo / Inspect) for PR-level CI checks** plus a **commercial platform (LangSmith / Braintrust / Weave) for production trace annotation, dataset management, and audit** ([Confident AI comparison](https://www.confident-ai.com/knowledge-base/compare/top-langsmith-alternatives-and-competitors-compared)). The Promptfoo acquisition is also a consolidation signal worth registering: eval tooling is being pulled into the model vendors themselves — keep your golden sets and result schemas portable (plain JSONL + OTel spans) so the pipeline survives a vendor change.
 
-One more 2026 shift that affects architecture: **graders are converging with training infrastructure.** OpenAI's platform exposes grader objects (python graders, score-model graders, multigraders) shared between its Evals API and reinforcement fine-tuning jobs ([graders guide](https://developers.openai.com/api/docs/guides/graders)), and Prime Intellect's `verifiers` v1 (previewed ~Jul 13, 2026) restructured this further into three composable pieces — taskset (data/tools/scoring), harness (the agent loop), and runtime (local or sandboxed) — with Harbor as the first fully-supported third-party harness format, treating RL environments and evals as one artifact ([Environments Hub](https://www.primeintellect.ai/blog/environments); architecture detail per [MarkTechPost](https://www.marktechpost.com/2026/07/13/prime-intellect-releases-verifiers-v1/) — a secondary source). If your evaluators may someday double as reward functions, every grader is a reward spec — red-team it like one (modules 10 and 12 cover reward hacking and eval–training separation in depth).
+One more 2026 shift that affects architecture: **graders are converging with training infrastructure.** OpenAI's platform exposes grader objects (python graders, score-model graders, multigraders) shared between its Evals API and reinforcement fine-tuning jobs ([graders guide](https://developers.openai.com/api/docs/guides/graders)), and Prime Intellect's `verifiers` v1 (previewed ~Jul 13, 2026) restructured this further into three composable pieces — taskset (data/tools/scoring), harness (the agent loop), and runtime (local or sandboxed) — with Harbor as the first fully-supported third-party harness format, treating RL environments and evals as one artifact ([Environments Hub](https://www.primeintellect.ai/blog/environments); architecture detail per [MarkTechPost](https://www.marktechpost.com/2026/07/13/prime-intellect-releases-verifiers-v1/) — a secondary source). **Nov 2026 update:** v0.4.0 (Oct 12, 2026) removed legacy v0 and made judges default to `openai/gpt-6-luna`, so pin the judge for reproducibility; it also dropped the default 4-hour rollout timeout. v0.4.1 (Nov 3, 2026) moved full evals, serving and uploads out of core into prime-rl and removed `vf-eval` and `vf-replay` (`vf-run` stays for quick runs). `nan` no longer means "unscored", and `Task.rescore(trace)` supports offline rescoring ([releases](https://github.com/PrimeIntellect-ai/verifiers/releases)). If your evaluators may someday double as reward functions, every grader is a reward spec — red-team it like one (modules 10 and 12 cover reward hacking and eval–training separation in depth).
 
 ---
 
@@ -6540,6 +6565,8 @@ Anchored, per §4.2b Move 4 — the anchors describe concrete answers, including
 
 Scaling an eval is not “make the same loop cheaper at any cost.” It is preserving the decision while reducing time or spend. Every optimization therefore needs two measurements: resource use **and** evaluator validity against the same held-out labels. A cascade that saves 80% but misses the rare safety failures is not an optimization.
 
+There are two levels in this module. Sections 5.2–5.6b make one evaluation loop cheaper and faster. Section 5.6c (new in November 2026) covers what changes when many teams run millions of evaluations: the scarce resources become provider quota, statistical signal and trust between teams, and the design that handles them is a ledger of idempotent work units, not a bigger worker pool. If you are building a shared eval platform, read 5.6c first.
+
 ## 5.1 The Scaling Challenge
 
 As your AI system grows, your evaluation system must scale with it. This module covers strategies for running evaluations efficiently at scale.
@@ -6614,20 +6641,23 @@ Per-call costs are *derived*, not quoted — always compute them from per-millio
 
 | Model | Input $/MTok | Output $/MTok | Typical eval role |
 |---|---|---|---|
-| `claude-haiku-4-5` | $1.00 | $5.00 | Tier-1 screener, high-volume checks |
+| `claude-haiku-5-5` | $0.10 (prompts up to 100,000 tokens; $0.50 above) | $0.50 ($2.50 above 100,000 prompt tokens) | Tier-1 screener since Oct 7, 2026; price depends on prompt length, so a flat per-token cost model is wrong for long prompts (see section 5.6c.7) |
+| `claude-haiku-4-5` | $1.00 | $5.00 | Prior-generation screener (tier-1, high-volume checks) |
 | `claude-sonnet-4-6` | $3.00 | $15.00 | Default production judge |
+| `claude-sonnet-5-5` | $2.00 | $10.00 | High-volume judge candidate since Sept 28, 2026; cache read $0.10/MTok; re-calibrate before switching from Sonnet 5 |
 | `claude-sonnet-5` | $2.00 | $10.00 | High-volume judge candidate; calibrate against human labels |
 | `claude-opus-5-5` | $4.00 | $20.00 | Recommended default arbiter since Sept 22; re-calibrate before switching judges |
 | `claude-opus-5` | $5.00 | $25.00 | Prior default arbiter; now listed as legacy (still Active) |
 | `claude-opus-4-8` | $5.00 | $25.00 | Prior-generation arbiter; useful as an A/B baseline and refusal fallback |
+| `claude-fable-5-2` | $8.00 | $40.00 | Frontier capability evals since Nov 9, 2026; cheaper than Fable 5.1; cache reads at $0.20/MTok; needs 30-day data retention |
 | `claude-fable-5-1` | $10.00 | $50.00 | Frontier capability evals; cache reads at $0.25/MTok (0.025× — vs the standard 0.1×) change the economics of replay-heavy long-context harnesses |
 | `claude-fable-5` | $10.00 | $50.00 | Capability evals — almost never a judge |
 
-Prices verified September 23, 2026 against the [Claude pricing docs](https://platform.claude.com/docs/en/about-claude/pricing); always re-check, as prices change. **Update, Sept 17, 2026:** Sonnet 5's $2/$10 rate — originally announced as introductory pricing through August 31, 2026 — is now **permanent**. Anthropic's pricing page states the scheduled September 1, 2026 increase to $3/$15 "will not occur," so stop budgeting for it ([pricing docs](https://platform.claude.com/docs/en/about-claude/pricing)). **Update, Sept 22, 2026:** Opus 5.5 fast mode is **$8/$40** — the same 2× multiplier over its own $4/$20 standard rate, "up to 2.5x" output speed, Claude API only, **research preview** (not on Batch, Bedrock, Vertex, or Foundry) — treat it as unstable for a production cost model until it graduates out of preview. Opus 5 and Opus 4.8 fast mode are both **$10/$50** — double the standard $5/$25 for the *same* model, Claude API only, not Batch — so the speed knob is a cost lever, not just a latency one; Opus 4.7 fast mode has since been **removed** — passing `speed: "fast"` on 4.7 now errors, so a harness that pinned fast mode to 4.7 will break on upgrade ([pricing docs](https://platform.claude.com/docs/en/about-claude/pricing)). Two more cost gotchas from the same docs: (1) **tokenizer drift** — Opus 4.7+ and Sonnet 5 use a newer tokenizer that produces **~30% more tokens for the same text** (Anthropic's pricing page names it for "Claude 4.7 and later models and Claude Mythos Preview"; Fable 5/5.1, Mythos 5/5.1 and Opus 5.5 aren't individually named in that footnote — as newer releases on the same tokenizer family they're very likely on it too, but verify before hard-coding a multiplier for them), so per-call costs don't scale down from older models the way the list price suggests; (2) **Batch API is a flat 50% off** input and output for every model. Worked example: a Sonnet 4.6 judge call at 2,000 input + 250 output tokens costs 2,000 × $3/1M + 250 × $15/1M ≈ **$0.0098**.
+Prices verified September 23, 2026 against the [Claude pricing docs](https://platform.claude.com/docs/en/about-claude/pricing); the three new rows (`claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-fable-5-2`) were verified November 11, 2026 against the same pricing page and the model overview pages ([Fable 5.2](https://platform.claude.com/docs/en/models/fable-5-2/overview), [Sonnet 5.5](https://platform.claude.com/docs/en/models/sonnet-5-5/overview), [Haiku 5.5](https://platform.claude.com/docs/en/models/haiku-5-5/overview)); always re-check, as prices change. **Update, Sept 17, 2026:** Sonnet 5's $2/$10 rate — originally announced as introductory pricing through August 31, 2026 — is now **permanent**. Anthropic's pricing page states the scheduled September 1, 2026 increase to $3/$15 "will not occur," so stop budgeting for it ([pricing docs](https://platform.claude.com/docs/en/about-claude/pricing)). **Update, Sept 22, 2026:** Opus 5.5 fast mode is **$8/$40** — the same 2× multiplier over its own $4/$20 standard rate, "up to 2.5x" output speed, Claude API only, **research preview** (not on Batch, Bedrock, Vertex, or Foundry) — treat it as unstable for a production cost model until it graduates out of preview. Opus 5 and Opus 4.8 fast mode are both **$10/$50** — double the standard $5/$25 for the *same* model, Claude API only, not Batch — so the speed knob is a cost lever, not just a latency one; Opus 4.7 fast mode has since been **removed** — passing `speed: "fast"` on 4.7 now errors, so a harness that pinned fast mode to 4.7 will break on upgrade ([pricing docs](https://platform.claude.com/docs/en/about-claude/pricing)). Two more cost gotchas from the same docs: (1) **tokenizer drift** — Opus 4.7+ and Sonnet 5 use a newer tokenizer that produces **~30% more tokens for the same text** (Anthropic's pricing page names it for "Claude 4.7 and later models and Claude Mythos Preview"; Fable 5/5.1, Mythos 5/5.1 and Opus 5.5 aren't individually named in that footnote — as newer releases on the same tokenizer family they're very likely on it too, but verify before hard-coding a multiplier for them), so per-call costs don't scale down from older models the way the list price suggests; (2) **Batch API is a flat 50% off** input and output for every model. Worked example: a Sonnet 4.6 judge call at 2,000 input + 250 output tokens costs 2,000 × $3/1M + 250 × $15/1M ≈ **$0.0098**.
 
 **Retirement heads-up:** Opus 4.1 was retired Aug 5, 2026 on Anthropic's own platforms (Claude API, Claude Platform on AWS, Microsoft Foundry) — replaced by Opus 4.8; Bedrock and Google Cloud set their own retirement schedules, so a Bedrock-pinned harness may not be affected yet. Opus 4.8 and Sonnet 4.6 are "Active" in Anthropic's deprecation-lifecycle terms but are labeled "Legacy" on the [models overview](https://platform.claude.com/docs/en/models/overview) page — Anthropic recommends migrating to Opus 5 / Sonnet 5 — with earliest retirement dates of May 28, 2027 and Feb 17, 2027 respectively ([model deprecations](https://platform.claude.com/docs/en/about-claude/model-deprecations)). Pinning either in a harness today is safe, but date-bounded — put the retirement date in your upgrade backlog now.
 
-**Opus 5.5, Sept 22 — and what didn't retire:** `claude-opus-5-5` retires not before September 22, 2027. Opus 5 itself is unaffected on the lifecycle clock — still "Active," not sooner than July 24, 2027 — but the same [models overview](https://platform.claude.com/docs/en/models/overview) page moved it out of the headline model table and into a "Legacy models (still available)" footer the day Opus 5.5 shipped; Anthropic's own guidance is now "start with Claude Opus 5.5 for most workloads." Sonnet 5.5 and Haiku 5.5 are announced but not shipped — the launch page says they "will follow in the coming weeks" with no price given, so don't pre-budget a rate for them.
+**Opus 5.5, Sept 22 — and what didn't retire:** `claude-opus-5-5` retires not before September 22, 2027. Opus 5 itself is unaffected on the lifecycle clock — still "Active," not sooner than July 24, 2027 — but the same [models overview](https://platform.claude.com/docs/en/models/overview) page moved it out of the headline model table and into a "Legacy models (still available)" footer the day Opus 5.5 shipped; Anthropic's own guidance is now "start with Claude Opus 5.5 for most workloads." **Nov 2026 update:** Sonnet 5.5 and Haiku 5.5 have both shipped (Sept 28 and Oct 7, 2026). Sonnet 5.5 is $2/$10 per MTok ([overview](https://platform.claude.com/docs/en/models/sonnet-5-5/overview)). Haiku 5.5 is $0.10/$0.50 for prompts up to 100,000 tokens and $0.50/$2.50 above that ([pricing](https://platform.claude.com/docs/en/about-claude/pricing)). See section 5.6c.7 for the re-priced cascade. Fast mode also moved: Fable 5.2 fast mode is $16/$80 ([what's new](https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2)), and fast mode on Opus 4.8 is deprecated with removal on Nov 30, 2026 ([release notes](https://platform.claude.com/docs/en/release-notes/overview)). Re-read the [fast mode page](https://platform.claude.com/docs/en/build-with-claude/fast-mode) before relying on the Sept 22 availability notes above.
 
 **If your harness also uses OpenAI models as judges:** GPT-6 Astra (`gpt-6-astra`, OpenAI's flagship since Sept 3, 2026) prices at $10/$50 per MTok (cached input $1/MTok); GPT-5.6 Sol (`gpt-5.6-sol`) prices at $4/$20, but the pricing page marks that rate "promotional... through November 21, 2026" — the post-promo price was not published as of Sept 17, 2026, so don't bake $4/$20 into a cost model that runs past that date ([OpenAI pricing](https://developers.openai.com/api/docs/pricing)). Two more joined the lineup the same day as Opus 5.5: GPT-6 Sol (`gpt-6-sol`) at $2/$10 (cached input $0.20) and GPT-6 Luna (`gpt-6-luna`) at $0.10/$0.50 (cached input $0.01), both released Sept 22, 2026 — roughly half their GPT-5.6 namesakes' list prices ([OpenAI pricing](https://developers.openai.com/api/docs/pricing)).
 
@@ -6644,6 +6674,7 @@ discount — a 75% cut from Fable 5's $1/MTok cache-read rate. Opus 5.5 cache
 $5/MTok for the 5-minute TTL (1.25×) and $8/MTok for the 1-hour TTL (2×). All
 three rates meaningfully change the economics of a harness that replays a long
 rubric or transcript on every grading pass ([pricing docs](https://platform.claude.com/docs/en/about-claude/pricing)).
+**Nov 2026 update:** cache-read rates are now $0.10/MTok on Sonnet 5.5 (cut from $0.20 on Oct 7, 2026), $0.01/MTok on Haiku 5.5 (up to 100,000 prompt tokens; $0.05 above) and $0.20/MTok on Fable 5.2 ([pricing docs](https://platform.claude.com/docs/en/about-claude/pricing), [release notes](https://platform.claude.com/docs/en/release-notes/overview)).
 A cached prefix must clear a **minimum token count**, and below it
 nothing caches: no error, no warning, just
 `cache_creation_input_tokens: 0` and a full-price bill.
@@ -6653,6 +6684,7 @@ The minimum is **not monotonic across model generations**, which is what catches
 | Model | Minimum cacheable prefix |
 |---|---:|
 | Claude Opus 5, Fable 5 | **512 tokens** |
+| Sonnet 5.5, Haiku 5.5 (Nov 2026; [Sonnet 5.5 overview](https://platform.claude.com/docs/en/models/sonnet-5-5/overview), [pricing](https://platform.claude.com/docs/en/about-claude/pricing)) | **512 tokens** |
 | Opus 4.8, Sonnet 5, Sonnet 4.6 | 1,024 tokens |
 | Opus 4.7 | 2,048 tokens |
 | Opus 4.6, Haiku 4.5 | **4,096 tokens** |
@@ -7771,6 +7803,485 @@ These levers can be combined, but their savings are not guaranteed or quality-ne
 
 ---
 
+## 5.6c Evals as a Platform: The Scalable Way (November 2026)
+
+> **Bottom line.** Sections 5.3–5.6 scale a *loop*: more workers, more queues, more pods. That design stops helping early, because CPU is not the scarce resource. At scale three things run out: **provider quota**, **statistical signal**, and **trust between teams**. The scalable design treats every model call as an idempotent cell in a ledger, schedules against token quota instead of queue depth, stores transcripts so grading can be replayed, buys signal with statistics before buying samples, and makes tenancy and cost attribution part of the data model.
+
+### 5.6c.1 The three walls
+
+Take a concrete suite. 2,000 tasks, 3 system variants, 5 repetitions each:
+
+```
+2,000 tasks × 3 variants × 5 reps = 30,000 cells per full run
+```
+
+Run it with the worker pool from 5.3.2 and you hit three walls, in this order.
+
+| Wall | What you see | Why more workers do not fix it | What fixes it |
+|---|---|---|---|
+| **Quota** | Doubling workers doubles 429 responses, not throughput | The provider caps tokens per minute per model. Throughput is `quota ÷ tokens per cell`, whatever the pod count | Schedule against quota headroom (5.6c.4). Cache the prefix. Move patient work to the batch lane |
+| **Signal** | Ten times the samples makes the interval about three times narrower | Standard error shrinks with `1/√n`. Each extra point of precision costs more than the last | Pair the comparison, cluster the errors, size the run from the decision (5.6c.6) |
+| **Trust** | Two teams report different numbers for the same model | Different grader versions, different retry rules, infra errors scored as failures, a holdout one team has already tuned on | One ledger, versioned graders, coverage reported with every score, per-tenant holdouts (5.6c.8) |
+
+The Kubernetes autoscaler in 5.6.1 scales on Redis queue length. That is the wrong control signal once you hit the quota wall: a long queue adds pods, the pods add 429s, the retries add cost, and throughput stays flat.
+
+### 5.6c.2 The architecture
+
+```
+  suite spec (YAML in git)            what to measure, for which decision
+        │
+        ▼
+  ┌────────────┐  expand task × variant × rep into cells
+  │  Planner   │  subtract cells the ledger already holds
+  └─────┬──────┘
+        ▼
+  ┌────────────┐  lanes: PR gate │ nightly batch │ sandbox │ online
+  │ Scheduler  │  admit when: tenant budget left AND provider quota left
+  └─────┬──────┘
+        ▼
+  ┌────────────┐      ┌──────────────────┐
+  │ Generation │ ───► │ Transcript store │  append-only, never edited
+  │ executors  │      └────────┬─────────┘
+  └────────────┘               ▼
+                        ┌────────────┐  grade_id = hash(cell_id, grader version)
+                        │  Graders   │  a new rubric re-grades stored transcripts
+                        └─────┬──────┘
+                              ▼
+                        ┌────────────┐  results (scored rows)
+                        │   Ledger   │  errors  (never scored)
+                        └─────┬──────┘
+                              ▼
+                        ┌────────────┐  paired differences, clustered errors,
+                        │ Stats+Gate │  coverage, cost per decision
+                        └────────────┘
+```
+
+Five design rules carry the whole diagram.
+
+1. **The unit of work is a cell, and a cell has a content address.** Same task, same variant config, same rep number: same id, on any machine, in any run.
+2. **The grader is not part of that address.** Generation is the expensive, slow, non-repeatable step. Grading is cheap and repeatable. Keep them apart, or every rubric edit pays for generation again.
+3. **Errors are not results.** An attempt that never produced a scorable output goes to an error table with a failure class. It does not occupy the cell, so a resume retries it.
+4. **Every score ships with its coverage.** `scored cells ÷ planned cells`. A pass rate over 71% of the plan is a different measurement from a pass rate over 100% of it.
+5. **Admission is a budget decision.** A cell runs when its tenant has budget and the model has quota. Queue depth decides nothing.
+
+### 5.6c.3 The cell and the ledger
+
+```python
+def cell_id(task_id: str, task_version: str, variant: dict, rep: int) -> str:
+    """Content address for one unit of generation work.
+
+    `variant` holds everything that changes what the model under test sees
+    or how it runs: model id, effort, prompt hash, tool-list hash, scaffold
+    version, sandbox image digest. The grader is deliberately absent, so a
+    rubric change never forces a re-run of the model.
+    """
+    payload = json.dumps(
+        {"task": task_id, "task_version": task_version,
+         "variant": variant, "rep": rep},
+        sort_keys=True, separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:20]
+
+
+def plan_cells(tasks: list, variants: list, reps: int, ledger: dict) -> dict:
+    """Expand task × variant × rep, then subtract work the ledger holds.
+
+    `ledger` maps cell_id -> status. A cell is done only if it produced a
+    transcript a grader can read. Infra errors stay on the work list.
+    """
+    if reps < 1:
+        raise ValueError("reps must be >= 1")
+    done = {"completed", "truncated", "refused"}
+    planned, todo, reused = set(), [], 0
+    for task in tasks:
+        for variant in variants:
+            for rep in range(reps):
+                cid = cell_id(task["id"], task["version"], variant, rep)
+                if cid in planned:
+                    raise ValueError("two variants or tasks describe the same work")
+                planned.add(cid)
+                if ledger.get(cid) in done:
+                    reused += 1
+                else:
+                    todo.append({"cell_id": cid, "task_id": task["id"],
+                                 "variant": variant, "rep": rep})
+    return {"planned": len(planned), "reused": reused, "todo": todo}
+```
+
+What this buys, on the 30,000-cell suite:
+
+| Event | Without a ledger | With a ledger |
+|---|---|---|
+| A PR changes one of the three variants | Re-run 30,000 cells | Run 10,000. The two unchanged variants are reused |
+| The run dies at 80% | Start again, or write one-off resume code | Re-submit the same spec. The planner returns the missing 6,000 |
+| The rubric changes | Re-run 30,000 generations and 30,000 judge calls | 0 generations. 30,000 judge calls on stored transcripts, on the batch lane |
+| A second team wants the same baseline | Pays for it again | Reads it, if the variant config is byte-identical |
+| A provider outage fails 2,000 calls | 2,000 zeros in the pass rate | 2,000 error rows. Coverage drops to 93%. The gate refuses to report until a resume fills them |
+
+Three statuses count as done, and each is a different measurement:
+
+| Status | Meaning | How it is scored |
+|---|---|---|
+| `completed` | The model produced a full answer | Graded normally |
+| `truncated` | The response hit `max_tokens` | Shown and counted, not averaged in as wrong. Re-running the same config truncates again, so fix the config: that is a new variant |
+| `refused` | A safety classifier or the model declined | Its own metric. A refusal zero and a capability zero are never summed (Module 15 §15.4) |
+
+Everything else (timeout, 429 after retries, 5xx, sandbox failed to start, grader crashed, the response came from a different model than the one requested) is an **error row**, with a failure class and an attempt count. The last one matters more at scale than it sounds: read `model` from each response and compare it with the request. A fallback or reroute that serves a different model produces a score that measures nothing.
+
+**What goes in `variant`, and the bug this prevents.** If the sandbox image tag is `latest`, two runs a week apart share a cell id and measure different environments. The ledger then reuses a stale result with full confidence. Put digests in the variant, not tags: prompt hash, tool-list hash, image digest, scaffold commit.
+
+**Store the transcript, not the verdict.** Every message, tool call, tool result and error for the cell, plus the usage block the API returned. The grader reads the store. This is what makes three things cheap that are otherwise expensive: re-grading under a new rubric, auditing a surprising score without re-running it, and measuring judge drift by re-grading last month's transcripts with this month's judge.
+
+**The grade has an address too.** `grade_id = hash(cell_id, judge model id, judge effort, rubric hash, grader code version)`. Every field is resolved, never "default". Two platform defaults moved under their users in the six weeks before this edition: LangSmith's new OpenAI judge evaluators switched default model on Nov 9, 2026 ("New OpenAI LLM-as-a-judge evaluators default to `gpt-6-luna` instead of `gpt-6.1-sol`", [LangSmith changelog](https://docs.langchain.com/langsmith/self-hosted-changelog)), and Prime Intellect's `verifiers` v0.4.0 did the same on Oct 12 ("Judges default to `openai/gpt-6-luna`", [release notes](https://github.com/PrimeIntellect-ai/verifiers/releases)). A grade keyed on "the default judge" silently became a different measurement on those dates.
+
+### 5.6c.4 Lanes, and scheduling against quota
+
+One queue for everything means a nightly re-grade can starve a PR gate. Split the work by how long it can wait.
+
+| Lane | Can wait | Transport | What runs here | What limits it |
+|---|---|---|---|---|
+| **PR gate** | Minutes | Synchronous API | A pinned subset, compared with the stored baseline | Tokens per minute for that model |
+| **Nightly** | Hours | Provider batch endpoint | The full suite, re-grades, judge-drift checks | Batch queue size, 24-hour expiry |
+| **Sandbox** | Minutes to hours per cell | Synchronous API, called from a sandbox fleet | Agent rollouts | Sandbox concurrency and wall-clock first, quota second |
+| **Online** | Continuous | Either | Sampled production traces (5.6c.9) | The sampling budget |
+
+**How the quota is expressed.** Anthropic's limits are "measured in requests per minute (RPM), input tokens per minute (ITPM), and output tokens per minute (OTPM) for each model class", enforced with a token bucket ([rate limits](https://platform.claude.com/docs/en/api/rate-limits)). One line on that page changes the design: "The API's default ITPM rate limits count only uncached input tokens." Fresh input and cache *writes* count. Cache *reads* do not.
+
+So prompt caching buys throughput as well as money. Work it through on the 30,000-cell suite, with a judge call of 2,000 input tokens (1,500 of them a stable rubric) and 300 output tokens. The two limits below are **assumed for the arithmetic**. Read your own from the rate-limits page.
+
+```
+Assumed limits:  ITPM = 2,000,000    OTPM = 400,000
+
+No caching
+  input counted   30,000 × 2,000 = 60,000,000 tokens
+  time floor      60,000,000 ÷ 2,000,000 = 30 minutes
+
+Rubric cached (1,500 tokens read from cache, 500 fresh)
+  input counted   30,000 × 500 = 15,000,000 tokens
+  time floor      15,000,000 ÷ 2,000,000 = 7.5 minutes
+
+Output, either way
+  output counted  30,000 × 300 = 9,000,000 tokens
+  time floor      9,000,000 ÷ 400,000 = 22.5 minutes   ← now the binding limit
+```
+
+Three consequences.
+
+1. **Worker count appears nowhere in that calculation.** Past the point where the bucket is full, pods add 429s.
+2. **The binding limit moves.** Caching took input from 30 minutes to 7.5, and output became the floor at 22.5. The next lever is on the output side: a shorter verdict schema, or a lower `effort`, because thinking tokens bill and count as output.
+3. **Limits are per model class.** Moving the judge to a new model does not inherit the old model's headroom, and a cascade spreads load across two buckets.
+
+**The control loop.** Drive concurrency from the provider's own signals, not from queue depth:
+
+| Signal | Source | Action |
+|---|---|---|
+| Tokens remaining in this minute | `anthropic-ratelimit-input-tokens-remaining`, `anthropic-ratelimit-output-tokens-remaining` (rounded to the nearest thousand) | Admit cells while the remaining budget covers their estimated tokens |
+| A 429 | The response names which limit was hit | Halve concurrency for that model. Honour `retry-after` when present. The page warns "Not every 429 carries it" |
+| A clean minute | No 429s | Add a little concurrency back |
+| Cache reads fall to zero | `usage.cache_read_input_tokens` | Stop and find the invalidator. Throughput just dropped by the cached fraction |
+
+Inspect AI ships this pattern as its default: "By default, adaptive concurrency is used with a maximum of 100 concurrent connections per model", starting at 20 ([model concurrency](https://inspect.aisi.org.uk/models-concurrency.html)). The same page carries a warning worth copying into your own scheduler: a very low concurrency floor can stretch a run past Anthropic's 5-minute cache lifetime, so a throttled lane starts paying for cache writes again. Slow lanes need the 1-hour cache duration.
+
+**The nightly lane is a different pool.** Anthropic's batch endpoint charges "50 percent of the standard API prices", takes "100,000 Message requests or 256 MB in size, whichever is reached first" per batch, finishes most batches within an hour, and expires a batch that is not done in 24 hours ([batch processing](https://platform.claude.com/docs/en/build-with-claude/batch-processing)). The same page states: "Usage of the Batches API does not affect rate limits in the Messages API." That last line is what makes lanes work: the nightly suite cannot starve the PR gate, because it does not draw from the same bucket.
+
+Rules the batch lane imposes on the ledger:
+
+| Batch rule | Consequence for the platform |
+|---|---|
+| "Batch results can be returned in any order" | Set `custom_id` to the `cell_id` (or `grade_id`). Never join by position |
+| Expired, errored and cancelled results exist | Each becomes an error row. An expired batch scored as zero failures is the classic silent bug |
+| Caching and batch discounts "can stack", but cache hits are "best-effort" (the page reports hit rates from 30 to 98 percent) | Budget the batch discount as certain and the cache discount as a range. Use the 1-hour cache duration |
+| `stream`, fast mode, server-side `fallbacks` and `max_tokens: 0` are rejected | A refusal in the batch lane is final. There is no automatic retry on another model |
+| One request, one response | A multi-turn agent rollout cannot ride the batch endpoint as a unit. It belongs in the sandbox lane |
+
+OpenAI's batch endpoint has the same 50% discount and a "separate pool" of rate limits, with 50,000 requests or 200 MB per batch ([batch guide](https://developers.openai.com/api/docs/guides/batch)). Gemini's is 50% of standard cost with a 24-hour target turnaround ([Gemini batch](https://aistudio.google.com/docs/batch-api)). The lane design is the same on all three. The limits differ, so keep them in config.
+
+### 5.6c.5 The sandbox lane: agent rollouts
+
+A judge call is a function. An agent rollout is a process: it needs a filesystem, tools, a time limit, and a clean start. Each cell gets its own sandbox, destroyed afterwards.
+
+The scaling surprise here is that **the infrastructure is part of the measurement**. Anthropic ran Terminal-Bench 2.0 on Kubernetes at six resource settings, same model, same harness, same tasks ([Quantifying infrastructure noise in agentic coding evals](https://www.anthropic.com/engineering/infrastructure-noise), Feb 2026):
+
+```
+Resource setting         Infra error rate     Task success
+1× (limit = request)          5.8%            baseline
+3× headroom                   2.1%            within noise of baseline (p = 0.40)
+Uncapped                      0.5%            +6 percentage points vs 1× (p < 0.01)
+```
+
+Two different effects sit in that table. Up to about 3×, extra headroom removes pod failures and the score does not move. Beyond it, success rises faster than errors fall: the extra resources start helping the agent solve tasks. The post's summary: "Two agents with different resource budgets and time limits aren't taking the same test."
+
+What the platform does about it:
+
+| Rule | Why |
+|---|---|
+| Resource floor, resource ceiling and time limit go in `variant` | They change the score, so they change the cell id. Two runs at different limits are never merged |
+| Set the floor and the ceiling separately | Equal values leave, in the post's words, "zero headroom for transient spikes". The 1× row above is that setting |
+| A pod that died is an error row | It is not a failed task. Coverage drops, the pass rate does not |
+| A hard wall-clock ceiling per cell | A hung stream can send keepalives for hours and hold a sandbox slot. Only a total-time limit reclaims it |
+| Grade the end state, not the transcript | Run the tests, inspect the files. A judge reading an agent's narration grades the narration |
+
+Sandbox capacity, not model quota, is usually the first limit in this lane. Concrete defaults, so you know what you are overriding:
+
+| Tool | Default concurrency | Where it runs sandboxes |
+|---|---|---|
+| Inspect AI | Docker: "twice the number of processors available to the eval" (`max_sandboxes`) | Docker built in. Kubernetes, Daytona, Modal, EC2 and others by extension ([sandboxing](https://inspect.aisi.org.uk/sandboxing.html)) |
+| Inspect on Kubernetes | 8 concurrent Helm installs, 8 uninstalls | Any cluster ([concurrency notes](https://k8s-sandbox.aisi.org.uk/tips/concurrency/)) |
+| Harbor | `-n` / `--n-concurrent`, default 4 | Docker locally. Daytona, Modal, E2B, GKE and more remotely. `--cpus` / `--memory` choose between `limit`, `request` and `guarantee`, which is the floor-and-ceiling choice above ([sandboxes](https://docs.harborframework.com/sandboxes/pre-integrated-sandboxes)) |
+
+Two public systems show the whole lane working. The Holistic Agent Leaderboard's harness "manages hundreds of Azure VMs" and reports 21,730 rollouts across 9 models and 9 benchmarks for about $40,000 ([HAL paper](https://arxiv.org/abs/2510.11977)). METR is moving off its own platform, Vivaria, to one built on Inspect: "METR currently uses UK AISI's Inspect framework for evaluating autonomous capabilities, and our open-source Hawk platform for running agent evaluations at scale" ([METR](https://metr.org/measuring-autonomous-ai-capabilities/)). Hawk's README describes the 5.6c.2 diagram almost box for box: a YAML spec, isolated Kubernetes pods per run, a managed model proxy, results in a PostgreSQL warehouse, and per-model row-level access control ([Hawk](https://github.com/METR/hawk)).
+
+### 5.6c.6 Buy signal before you buy samples
+
+The cheapest cell is the one you did not need. Before adding tasks or reps, take the variance reductions that cost nothing.
+
+The reference is Evan Miller's [Adding Error Bars to Evals](https://arxiv.org/abs/2411.00640) (Anthropic, Nov 2024). It makes five recommendations: report a standard error from the Central Limit Theorem, cluster the errors when questions come in related groups, reduce variance by resampling answers, analyse question-level **paired differences** when comparing two models, and run a power analysis before the eval.
+
+**Pair the comparison.** Suppose system A and system B answer the same 1,000 tasks. Hard tasks are hard for both, so their per-task scores move together. Comparing two averages throws that away. Comparing task by task keeps it.
+
+```
+Unpaired:  Var(A − B) = Var(A) + Var(B)
+Paired:    Var(A − B) = Var(A) + Var(B) − 2·Cov(A, B)
+
+With equal variances and correlation ρ between the two systems' task scores:
+           paired variance = unpaired variance × (1 − ρ)
+
+ρ = 0.5    →  half the variance  →  the same decision from half the tasks
+```
+
+Anthropic's write-up reports that the correlation between frontier models' question scores runs "between 0.3 and 0.7", and calls the technique "a 'free' variance reduction technique that is very well suited for AI model evals" ([A statistical approach to model evaluations](https://www.anthropic.com/research/statistical-approach-to-model-evals)). At those correlations, pairing is worth 30% to 70% of your sample budget. The ledger makes it automatic, because both variants share task ids.
+
+**Cluster the errors.** Twenty questions about one document are not twenty independent observations. If the model misreads the document, it misses most of them together. Treating them as independent makes the interval too narrow. The same write-up reports clustered standard errors "over three times as large" as naive ones. Cluster on whatever tasks share: source document, repository, conversation, customer.
+
+**More reps only fix one kind of noise.** Repeating a task K times shrinks the noise *within* that task by K. It does nothing for the spread *between* tasks. Miller's condition: once the within-task variance divided by K is small next to the between-task variance, more reps have little effect on the standard error. Past that point, spend on tasks.
+
+A fast check before any paid run, from the eval-health checklist that ships in Anthropic's `claude-api` skill for Claude Code (`shared/evals/eval-audit.md`, bundled Nov 2026; a local file, no public URL): the noise floor on a pass rate is roughly `1/√(n·R)` for n tasks and R reps.
+
+```
+ 25 tasks × 2 reps   →  about ±14 points
+100 tasks × 2 reps   →  about ±7 points
+2,000 tasks × 5 reps →  about ±1 point
+```
+
+If the smallest improvement you would ship on is 3 points and the floor is 7, no amount of careful grading helps. Change the design first.
+
+```python
+def paired_difference(scores_a: dict, scores_b: dict,
+                      cluster_of: Optional[dict] = None) -> dict:
+    """Mean per-task difference A − B with a 95% interval.
+
+    scores_a, scores_b: task_id -> that task's mean score across its reps.
+    cluster_of: task_id -> cluster id for tasks that share a source (same
+    document, same repository). Without it each task is its own cluster,
+    which gives the ordinary paired standard error.
+    """
+    shared = sorted(set(scores_a) & set(scores_b))
+    unpaired = len(set(scores_a) ^ set(scores_b))
+    diffs = {task: scores_a[task] - scores_b[task] for task in shared}
+    clusters = {}
+    for task in shared:
+        key = cluster_of[task] if cluster_of else task
+        clusters.setdefault(key, []).append(task)
+    n, g = len(shared), len(clusters)
+    if g < 2:
+        raise ValueError("need at least two clusters to estimate an error")
+    mean = sum(diffs.values()) / n
+    cluster_sums = [sum(diffs[task] - mean for task in tasks)
+                    for tasks in clusters.values()]
+    variance = (g / (g - 1)) * sum(s * s for s in cluster_sums) / (n * n)
+    se = math.sqrt(variance)
+    low, high = mean - 1.96 * se, mean + 1.96 * se
+    if low > 0:
+        decision = "A better"
+    elif high < 0:
+        decision = "B better"
+    else:
+        decision = "no detectable difference"
+    return {"n_tasks": n, "n_clusters": g, "unpaired_tasks": unpaired,
+            "mean_diff": mean, "se": se, "ci95": (low, high),
+            "decision": decision}
+```
+
+This is Miller's clustered error applied to per-task differences, with the usual `g/(g−1)` small-sample factor. With one task per cluster it equals his paired formula exactly. Two cautions. With fewer than about 30 clusters, 1.96 is optimistic: use a t quantile or bootstrap whole clusters. And `unpaired_tasks` above zero means the two arms did not cover the same tasks, which is a coverage problem to fix, not a number to ignore.
+
+**Size the run from the decision.** Miller's sample-size formula for a paired comparison:
+
+```
+n = (z_α/2 + z_β)² × (ω² + σ_A²/K_A + σ_B²/K_B) ÷ δ²
+
+ω²   variance of the per-task difference between the two systems
+σ²   within-task variance of each system, K its reps per task
+δ    the smallest difference you would act on
+```
+
+His worked example: ω² = 1/9, no within-task noise, δ = 3 points, 5% significance, 80% power gives **n ≈ 969 tasks**. Run that arithmetic before the suite, with ω² estimated from a pilot of 50 tasks. It tells you whether your 200-task suite can answer the question at all.
+
+**Smaller subsets, with a condition attached.**
+
+| Method | Published result | The condition |
+|---|---|---|
+| [tinyBenchmarks](https://arxiv.org/abs/2402.14992) | "it is sufficient to evaluate this LLM on 100 curated examples" to estimate MMLU within about 2% | The error was measured on models that resemble the calibration models. A new architecture or a fine-tune can sit outside that |
+| [Fluid Benchmarking](https://arxiv.org/abs/2509.11106) | Adaptive item selection gives "higher validity and less variance on MMLU with fifty times fewer items" | Needs an item-response model fitted on many prior models' results |
+| [metabench](https://arxiv.org/abs/2407.12844) | A subset "less than 3% of the original size" of six benchmarks reconstructs each score with 1.24% average RMSE | Same dependence on historical results |
+
+All three learn which items are informative from *past* models. Use a subset for the PR lane, where speed matters and the answer is "did this regress". Confirm on the full set in the nightly lane before a release decision. Re-fit when a new model generation lands.
+
+**Stopping early.** Stopping a run the moment the interval excludes zero looks efficient and inflates false positives, because you gave yourself many chances to be lucky. Either fix the looks in advance, or use a method built for continuous monitoring. Inspect now has the hook: "Early stopping enables you to skip samples or epochs during evaluation based on results observed so far" ([early stopping](https://inspect.aisi.org.uk/early-stopping.html)). The statistics for LLM evals specifically are young: [Hsu and Shekhar](https://arxiv.org/abs/2607.17409) (July 2026) build confidence sequences for this, mark the paper as preliminary, and test on synthetic data. Treat early stopping as a cost saver for the PR lane, not as evidence for a release.
+
+**Scaling the human labels.** Judges scale. Humans do not. Prediction-powered inference ([PPI](https://arxiv.org/abs/2301.09633), [PPI++](https://arxiv.org/abs/2311.01453)) combines a small human-labelled set with a large judge-scored set and still returns a valid interval, and PPI++ intervals "always improve on classical intervals using only the labeled data". On the platform this is a property of the results table: every scored row carries its judge verdict, and a random subset also carries a human label. Module 02 covers the method. The scaling point is that the human budget stays flat while the judged volume grows.
+
+### 5.6c.7 The economics, at November 2026 prices
+
+Claude Haiku 5.5 (released Oct 7, 2026) is priced at $0.10 input / $0.50 output per million tokens for prompts up to 100,000 tokens ([pricing](https://platform.claude.com/docs/en/about-claude/pricing)). That is a tenth of Haiku 4.5's $1 / $5. It changes which lever matters.
+
+Same job as Module 15 §15.5: 10,000 judge calls, 2,000 input tokens (1,500 a stable rubric) and 300 output tokens each. List prices, token counts as stated.
+
+| Strategy | Cost | vs naive |
+|---|---:|---:|
+| Naive Opus 5.5 ($4 / $20) | $140.00 | 100% |
+| + prompt caching (reads at $0.20) | $83.00 | 59% |
+| + batch (50% off) | $70.00 | 50% |
+| Caching + batch | $41.50 | 30% |
+| Haiku 5.5 screen only | $3.50 | 2.5% |
+| Cascade: Haiku 5.5, then Opus 5.5 on 20% | $31.50 | 22.5% |
+| **Cascade + caching + batch** | **$9.38** | **6.7%** |
+
+The arithmetic for the first and last rows:
+
+```
+Naive Opus 5.5      10,000 × (2,000 × $4 + 300 × $20) ÷ 1,000,000            = $140.00
+Haiku 5.5 screen    10,000 × (2,000 × $0.10 + 300 × $0.50) ÷ 1,000,000       = $3.50
+
+Cascade + caching + batch
+  Haiku, cached     10,000 × (500 × $0.10 + 1,500 × $0.01 + 300 × $0.50) ÷ 1,000,000 = $2.15
+  Opus on 20%        2,000 × (500 × $4 + 1,500 × $0.20 + 300 × $20) ÷ 1,000,000      = $16.60
+  Batch, 50% off    ($2.15 + $16.60) ÷ 2                                             = $9.38
+```
+
+**The lever is now the escalation rate.** With Haiku 4.5 and Opus 5, the screen cost 20% of the arbiter ($35 against $175), so a cheaper screen prompt was worth chasing. Now the screen is 2.5% of the arbiter:
+
+```
+Cascade cost ≈ screen + escalation rate × arbiter
+
+Escalate 10%   $3.50 + 0.10 × $140 = $17.50
+Escalate 20%   $3.50 + 0.20 × $140 = $31.50
+Escalate 40%   $3.50 + 0.40 × $140 = $59.50
+```
+
+Making the screen free saves $3.50. Moving the escalation rate from 20% to 10% saves $14. Spend your tuning effort on the acceptance boundary, learned on held-out human labels as 5.6b Example 1 requires.
+
+**Four things the table hides.** Each one has caught a real budget.
+
+1. **Thinking is on by default on Haiku 5.5, at `medium` effort.** Thinking tokens bill as output, so 300 output tokens understates a real verdict call. Pin `effort` and measure.
+2. **The tokenizer changed.** "The same text counts as approximately 30 percent more tokens than on Claude Haiku 4.5" ([Haiku 5.5 overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview)). A prompt you measured at 2,000 tokens on Haiku 4.5 is nearer 2,600.
+3. **There is a price cliff at 100,000 tokens.** Above that size, "a request whose prompt is over 100,000 tokens pays higher prices": $0.50 / $2.50, five times the base rate. Grading a long agent trajectory in one call can cross it. Judge per step or per tool call, or accept the higher tier knowingly.
+4. **Some refusals are billed.** Since Sept 24, 2026, "a refusal that arrives before any output is billed" when its category is `bio`, `frontier_llm` or `reasoning_extraction` ([refusals and fallback](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback)). Haiku 5.5 has no server-side fallback, and the batch lane rejects `fallbacks` on every model. Count refusals as their own outcome and their own cost line.
+
+**Before building a cascade, price the simpler design.** One model at a lower `effort` has one cache namespace, one rate-limit bucket, one calibration against human labels, and one thing to re-validate when a model retires. A cascade has two of each, plus a routing boundary that drifts. Run the strong judge at `low` effort on your labelled set first. If its agreement with humans holds, you may not need a cascade. If it does not, you now have the number that justifies the extra moving parts.
+
+**What this does to online scoring.** Screening one million production traces a day at the stated token counts:
+
+```
+Haiku 4.5   1,000,000 × $0.0035  = $3,500 per day
+Haiku 5.5   1,000,000 × $0.00035 = $350 per day
+```
+
+At $350 a day, the first tier can read every trace. Sampling stops being a cost control on tier one and becomes a design choice for the expensive tiers and for human review (5.6c.9). The validity rule does not relax: a cheap judge that reads everything still needs its error rate measured per slice against human labels.
+
+### 5.6c.8 Many teams on one platform
+
+Sharing the platform is where the savings are. It is also where one team's shortcut becomes another team's wrong number.
+
+| Shared across tenants | Isolated per tenant |
+|---|---|
+| Executors, sandbox fleet, scheduler | Budgets: dollars per suite per day, and a share of each model's tokens per minute |
+| The transcript store and ledger, as storage | Holdout task sets. Read access is the leak. A team that can read another team's holdout can tune on it (Module 12) |
+| Baseline cells for public variants, such as a stock model on a shared suite | Grader namespaces. `support/tone@v7` and `search/tone@v2` are different graders |
+| The statistics layer and report format | Prompts and transcripts that contain customer data |
+
+Four mechanisms carry most of the weight.
+
+1. **Admission by budget.** Each suite declares a dollar budget and a lane. The planner prices the `todo` list before anything runs, from measured tokens per cell on earlier runs. A run that would exceed its budget is refused with the estimate, not cut off halfway.
+2. **Weighted shares of the token bucket.** Divide each model's ITPM and OTPM across tenants by weight, and let idle share flow to whoever is waiting. Without this, the team with the most pods takes the quota.
+3. **Showback per decision.** Report dollars per suite, per run, and per decision the run supported. "The nightly regression suite costs $41 and gated 12 merges" is a number a team can act on. A shared API bill is not.
+4. **Access control on rows, not on the cluster.** Hawk's README lists row-level security per model. The use is plain: results for an unreleased model should be readable only by people cleared for it. The same pattern protects holdouts.
+
+**Served model is part of tenancy.** Providers reroute. From Dec 1, 2026, Google routes requests for `gemini-2.5-pro` to `gemini-3.8-flash` ([Gemini changelog](https://aistudio.google.com/docs/changelog)). A baseline pinned to the old name becomes a different model on that date, with no error. Inspect changed its cost tracking in v0.3.277 (Oct 2026) to use the rates of the model that actually served the request ([changelog](https://inspect.aisi.org.uk/CHANGELOG.html)). Do the same for scores: store the served model on every row, and make a mismatch an error row.
+
+### 5.6c.9 The online lane
+
+Production traces arrive whether or not you have budget to grade them. The managed platforms converge on one shape: **filter, then sample**. LangSmith: "Configure a sampling rate to control the percentage of filtered runs that trigger the automation action" ([online evaluations](https://docs.langchain.com/langsmith/online-evaluations-llm-as-judge)). Braintrust rules take a filter and a `sampling_rate` ([online scoring](https://www.braintrust.dev/docs/guides/logs/score)). Langfuse rules select "incoming observations using filters and a sampling rate" ([core concepts](https://langfuse.com/docs/evaluation/core-concepts.md)).
+
+That shape has a trap. If the filter is "traces that look bad", the sample tells you about traces that look bad. It cannot tell you the failure rate of the product, and it misses failures that look fine. Run two streams and keep them apart:
+
+| Stream | How it is chosen | What it can tell you |
+|---|---|---|
+| **Random floor** | A fixed fraction of all traces, chosen before anything is known about them | The population failure rate, and drift over time |
+| **Targeted** | Filters: errors, low screen score, long latency, thumbs-down, a new feature flag | More examples of known problems, for the dataset and for debugging |
+
+Store the sampling probability on every scored row. A population estimate that uses targeted rows must weight each one by one over its probability. If you cannot say what the probability was, the row can feed the dataset and nothing else.
+
+One portability note. The OpenTelemetry conventions for generative AI are the obvious schema for these rows, and they are still marked "Status: Development". They moved to their own repository, which listed no release as of Nov 11, 2026 ([semantic-conventions-genai](https://github.com/open-telemetry/semantic-conventions-genai)), and at least one attribute was renamed in the move (cache writes are now `gen_ai.usage.cache_write.input_tokens`). The draft does define an evaluation event, `gen_ai.evaluation.result`, with a name, a score value, a score label and an explanation. Emit it, and keep a mapping layer between it and your ledger so a rename costs one file.
+
+### 5.6c.10 Build, adopt, or neither
+
+| Your scale | Use | Why |
+|---|---|---|
+| One team, up to a few thousand cells per run | A script, the provider batch endpoint, and a ledger in JSONL or SQLite | `plan_cells` plus files is the whole platform at this size |
+| A few teams, tens to hundreds of thousands of cells | Inspect eval sets for model and judge calls, Harbor or Inspect sandboxes for rollouts | The log directory is the ledger: re-running a finished set "will be a no-op", and `--retry-attempts` defaults to 10 ([eval sets](https://inspect.aisi.org.uk/eval-sets.html)) |
+| Many teams, shared budgets, audit requirements | A platform: Hawk as a starting point, or the 5.6c.2 design on your own scheduler and warehouse | Tenancy, showback and access control are not in the frameworks |
+
+The size thresholds are judgment, not measurement. The real trigger for the third row is organisational: the day two teams need to trust each other's numbers.
+
+One caveat on the middle row. Inspect reuses a finished sample only when its id is stable. The docs warn that auto-assigned ids break when the dataset is shuffled, and Inspect then declines to reuse. That is rule 1 from 5.6c.2 arriving from the other direction: without a content address, there is no resume.
+
+**Testing the platform itself.** A scheduler bug looks exactly like a model regression. Three checks, each a few minutes:
+
+| Check | How | What a failure means |
+|---|---|---|
+| Oracle run | Push the reference answers through the whole pipeline | Below about 100%: the harness or grader is broken |
+| Null run | Push empty outputs, or a constant answer, through the whole pipeline | Above the chance rate: the grader is too lenient |
+| Replay | Re-submit a finished spec | Anything other than zero new cells: the cell id depends on something unstable |
+
+Run all three on every platform release, and the first two on every new suite.
+
+### 5.6c.11 Readiness checklist
+
+```
+THE CELL
+[ ] Every unit of generation work has a content address
+[ ] The address includes prompt hash, tool hash, image digest, resource limits
+[ ] The grader is not in the generation address; it is in the grade address
+[ ] Judge model, judge effort and rubric are resolved values, never "default"
+
+THE LEDGER
+[ ] Infra failures are error rows with a class and an attempt count
+[ ] Truncated and refused are their own statuses
+[ ] The served model is recorded and compared with the requested model
+[ ] Every reported score carries coverage: scored ÷ planned
+[ ] Re-submitting a finished spec schedules zero cells
+
+THE SCHEDULER
+[ ] Concurrency follows rate-limit headers and 429s, not queue depth
+[ ] Cache reads are asserted, per lane
+[ ] Patient work runs on the batch endpoint, keyed by cell id
+[ ] Sandbox cells have a hard wall-clock ceiling
+
+THE STATISTICS
+[ ] Comparisons are paired on task id
+[ ] Errors are clustered on shared source
+[ ] The run was sized from the smallest difference worth acting on
+[ ] Subsets are confirmed on the full set before a release decision
+
+THE TENANCY
+[ ] Runs are admitted against a dollar budget, priced before they start
+[ ] Token quota is shared by weight
+[ ] Holdouts are readable only by their owner
+[ ] Cost is reported per suite and per decision
+```
+
+---
+
 ## 5.7 Exercises
 
 ### Exercise 1: Cost Optimization
@@ -7791,6 +8302,20 @@ Design a distributed evaluation system that can:
 - Maintain < 5 minute latency for priority samples
 - Cost less than $500/day
 - Include architecture diagram and component specifications
+
+### Exercise 4: From Loop to Platform
+Take a suite you already run and move it onto the 5.6c design:
+- Write the `variant` dict for your system. List every field that changes what the model sees or how it runs. Find one you were not recording.
+- Run the suite twice from the same spec. The second run must schedule zero cells. If it does not, find the unstable field.
+- Change the rubric and re-grade from stored transcripts. Report generation cost and grading cost separately.
+- Compare two variants with `paired_difference`, then again as two unpaired means. Report both intervals and the correlation between the variants' task scores.
+- Read your rate-limit headers during a run. State which limit binds (requests, input tokens or output tokens) and what you would change first.
+
+### Exercise 5: Price the Cascade Against the Simple Design
+Using your own measured token counts and a labelled set of at least 200 cases:
+- Price a two-tier cascade and a single stronger judge at `low` effort. Include thinking tokens, cache writes, and the measured escalation rate.
+- Report each design's agreement with human labels, per slice.
+- State which you would run, and the escalation rate at which your answer flips.
 
 ---
 
@@ -9112,7 +9637,7 @@ Production trace
 - Run online judges **asynchronously** off the request path. They must never add latency to the user's response.
 - Choose the online scoring rate from risk, traffic, target precision, and budget. A 5–20% sample is a common starting range, not a universal optimum; cheap safety invariants may justify 100% coverage.
 - Treat a judge's self-reported **confidence** as an uncalibrated feature. Prefer disagreement, margin, or human-calibrated error estimates when routing cases for review.
-- Always emit traces with [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) so you can swap eval/observability backends without re-instrumenting.
+- Always emit traces with [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) so you can swap eval/observability backends without re-instrumenting. As of Nov 11, 2026 the conventions are still in Development status and have moved to the [semantic-conventions-genai repository](https://github.com/open-telemetry/semantic-conventions-genai), so treat attribute names as unstable.
 - Watch for **drift signals**: rolling mean of judge scores, distribution shift in input length / language / topic, rate of refusals, rate of tool errors.
 - **Promotion is a privacy event.** A trace has a retention window; an eval dataset lives forever, gets committed to repos, and is shared across teams. Scrub or pseudonymize PII *at promotion time* (names, emails, account numbers — a regex pass plus a cheap LLM redaction check), tag every promoted row with its source-trace provenance, and make user deletion requests propagate to eval datasets too. Auditors will ask; "it's just test data" is not an answer. Off-the-shelf: Arize Phoenix's PII Detection evaluator (arize-phoenix-evals 3.6.0, Aug 28, 2026) screens conversation turns, tool calls/results, and retrieved content for leaked personal data, so this check no longer has to be hand-rolled ([release notes](https://arize.com/docs/phoenix/release-notes/09-2026/09-01-2026-github-issues-pii-detection-and-client-updates)).
 
@@ -13799,7 +14324,7 @@ LangChain/LangSmith is one of several mature options. For new projects in 2026, 
 | RAG and agent metric library | **[RAGAS](https://docs.ragas.io/)** | Faithfulness, context precision/recall, agent goal accuracy, KG-based testset gen |
 | Pytest-style assertions for LLM outputs | **[DeepEval](https://github.com/confident-ai/deepeval)** | Drops into existing pytest CI |
 | YAML-first prompt A/B testing | **[Promptfoo](https://www.promptfoo.dev/)** | No-code config, fastest path to a comparison report |
-| Reference framework, model registry | **[OpenAI Evals](https://github.com/openai/evals)** | The original open-source eval registry (GitHub), still maintained — distinct from OpenAI's *hosted* Evals platform, which goes read-only Oct 31, 2026 and shuts down Nov 30, 2026 ([deprecations](https://developers.openai.com/api/docs/deprecations)) |
+| Reference framework, model registry | **[OpenAI Evals](https://github.com/openai/evals)** | The original open-source eval registry (GitHub), still maintained — distinct from OpenAI's *hosted* Evals platform, whose existing evals went read-only on Oct 31, 2026 and whose dashboard and API are scheduled to shut down on Nov 30, 2026 (status as of Nov 11, 2026; [deprecations](https://developers.openai.com/api/docs/deprecations)) |
 | Adversarial / red-team probes | **[Garak](https://github.com/NVIDIA/garak)** (NVIDIA), **[PyRIT](https://github.com/Azure/PyRIT)** (Microsoft) | Prebuilt jailbreak / prompt-injection probes |
 
 You will almost always end up with **two of these in production**: one for offline / CI evals (Inspect AI or Braintrust), and one for online tracing + drift monitoring (Phoenix, Langfuse, or LangSmith). Wire both to OpenTelemetry GenAI traces so you can swap either side without re-instrumenting.
@@ -17429,21 +17954,29 @@ contamination_types = {
 
 The `preference_leaderboard_contamination` row above (Llama 4 on LMArena) is a 2025 case of a *vendor* gaming a leaderboard. September 2026 produced a different failure mode: two independent, reputable indices scoring the **same released model** and landing on opposite conclusions.
 
-When GPT-6 Astra launched, Artificial Analysis's Intelligence Index scored it roughly level with its predecessor, GPT-5.6 Sol — no visible gain. Epoch AI's independently run ECI, over the same weights, ranked Astra **#1 of 247 models** (Epoch's own Sept 12 brief: "taking the top spot among the 247 models we track" — not 267; verified directly against the primary post). Artificial Analysis responded with two point releases inside a week: **v4.2 (Sept 4)** dropped the now-saturated GPQA Diamond (and, per its own changelog, already raised private-test-set weighting to 40% and added AA-Briefcase); **v4.3 (Sept 7)** marks only Terminal-Bench 4.0 and AutomationBench-AA as "(new in index)," and separately added GDPval-AA v2, CritPt, AA-Omniscience, and AA-LCR v1.1, dropped τ³-Banking, and raised private-test-set weighting further from 40% to 45%. A third version number, v4.1.1, appears in some secondary coverage with overlapping content and a sequencing that doesn't cleanly reconcile with v4.3's own dated claims — that inconsistency could not be resolved from primary sources here, so treat the exact version sequencing as unresolved without treating it as evidence against the substance of the change. Primary: [artificialanalysis.ai v4.3](https://artificialanalysis.ai/articles/artificial-analysis-intelligence-index-v4-3). Dispute coverage (secondary, label it as such): [the-decoder.com](https://the-decoder.com/artificial-analysis-overhauls-its-intelligence-index-after-gpt-6-astra-scoring-drew-skepticism/).
+When GPT-6 Astra launched, Artificial Analysis's Intelligence Index scored it roughly level with its predecessor, GPT-5.6 Sol — no visible gain. Epoch AI's independently run ECI, over the same weights, ranked Astra **#1 of 247 models** (Epoch's own Sept 12 brief: "taking the top spot among the 247 models we track" — not 267; verified directly against the primary post). Artificial Analysis responded with two point releases inside a week: **v4.2 (Sept 4)** dropped the now-saturated GPQA Diamond (and, per its own changelog, already raised private-test-set weighting to 40% and added AA-Briefcase); **v4.3 (Sept 7)** marks only Terminal-Bench 4.0 and AutomationBench-AA as "(new in index)," and separately added GDPval-AA v2, CritPt, AA-Omniscience, and AA-LCR v1.1, dropped τ³-Banking, and raised private-test-set weighting further from 40% to 45%. A third version number, v4.1.1, appears in some secondary coverage with overlapping content and a sequencing that doesn't cleanly reconcile with v4.3's own dated claims — that inconsistency could not be resolved from primary sources here, so treat the exact version sequencing as unresolved without treating it as evidence against the substance of the change. Primary: [artificialanalysis.ai v4.3](https://artificialanalysis.ai/articles/artificial-analysis-intelligence-index-v4-3) (superseded Nov 2026, see below). Dispute coverage (secondary, label it as such): [the-decoder.com](https://the-decoder.com/artificial-analysis-overhauls-its-intelligence-index-after-gpt-6-astra-scoring-drew-skepticism/).
 
-The teaching point survives the version-numbering confusion: **the index's composition is the claim.** Two competent, well-resourced organizations measured the same weights and disagreed enough to argue about it in public, and the resolution was not a re-run — it was a redesign of what gets measured and how much the private, hard-to-game portion counts. Before you cite a composite-index rank, read what it dropped and added this quarter, not just the number. Separately: "Terminal-Bench 4.0" appeared in Artificial Analysis's own additions list without a standalone maintainer launch post found from tbench.ai itself at the time this was first written — **partially resolved as of Sept 23**: tbench.ai's own site now hosts Terminal-Bench 4.0 live, as its current public benchmark, which confirms it is a Terminal-Bench-maintainer release rather than an Artificial-Analysis-only split. What is still unresolved is the *lineage* one level further back — see "Benchmark names are not stable identifiers" below.
+The teaching point survives the version-numbering confusion: **the index's composition is the claim.** Two competent, well-resourced organizations measured the same weights and disagreed enough to argue about it in public, and the resolution was not a re-run — it was a redesign of what gets measured and how much the private, hard-to-game portion counts. Before you cite a composite-index rank, read what it dropped and added this quarter, not just the number. Separately: "Terminal-Bench 4.0" appeared in Artificial Analysis's own additions list without a standalone maintainer launch post found from tbench.ai itself at the time this was first written — **partially resolved as of Sept 23**: tbench.ai's own site now hosts Terminal-Bench 4.0 live, as its current public benchmark (superseded Nov 2026, see below), which confirms it is a Terminal-Bench-maintainer release rather than an Artificial-Analysis-only split. What is still unresolved is the *lineage* one level further back — see "Benchmark names are not stable identifiers" below.
 
 **Self-report vs. independent measurement, restated with a fresh example.** The Artificial Analysis/Epoch split above is a disagreement between two *outsiders*. A cleaner and older pattern is a vendor's own number against an independent evaluator's number on the same model: CAISI's independent evaluation of DeepSeek V4 Pro found it trailing the US frontier by roughly eight months and scoring **lower** on CAISI's own tests than on DeepSeek's self-reported numbers ([nist.gov](https://www.nist.gov/news-events/news/2026/05/caisi-evaluation-deepseek-v4-pro)). Put next to each other, the two disputes make the same point from opposite directions — trust in a score drops whether the second measurer disagrees *upward* (Epoch on Astra) or *downward* (CAISI on DeepSeek) from the first one. The identity of the measurer is not a formality; it changes the number.
 
-**September 23 update: the ruler itself got refit.** Anthropic's Opus 5.5 card re-fit its own composite index (the AECI) on a fresh Epoch AI benchmark import — basket size 338→374 benchmarks, 525→732 models — and republished prior scores on the new fit: Mythos 5.1 162.0→168.12, Opus 5 160.7→165.18, with Opus 5.5 itself landing at 169.36 (global CI 165.23–177.05). None of those numbers are comparable across the fit boundary; 165.18 on the new fit and 160.7 on the old one describe the *same model*, not four points of real improvement — never compare index values across fits. Separately, Epoch's own Capabilities Index (ECI) — where Opus 5 scores 163 — is a **different index entirely** from Anthropic's AECI, despite both drawing on Epoch's public benchmark data; 163 (Epoch ECI) and 165.18 (Anthropic AECI, post-refit) are two different rulers, not two readings of one ruler, and should never be plotted on one axis. On the Artificial Analysis Intelligence Index (v4.3.2, a third, independent composite): Opus 5.5 at max effort scores **58** — GPT-6 Astra and Fable 5.1 tie at **53**, Opus 5 trails at **51** ([artificialanalysis.ai](https://artificialanalysis.ai/articles/claude-opus-5-5)). Three composite indices, three different scales, three different refit histories — read the fit date before you read the score.
+**September 23 update: the ruler itself got refit.** Anthropic's Opus 5.5 card re-fit its own composite index (the AECI) on a fresh Epoch AI benchmark import — basket size 338→374 benchmarks, 525→732 models — and republished prior scores on the new fit: Mythos 5.1 162.0→168.12, Opus 5 160.7→165.18, with Opus 5.5 itself landing at 169.36 (global CI 165.23–177.05). None of those numbers are comparable across the fit boundary; 165.18 on the new fit and 160.7 on the old one describe the *same model*, not four points of real improvement — never compare index values across fits. Separately, Epoch's own Capabilities Index (ECI) — where Opus 5 scores 163 — is a **different index entirely** from Anthropic's AECI, despite both drawing on Epoch's public benchmark data; 163 (Epoch ECI) and 165.18 (Anthropic AECI, post-refit) are two different rulers, not two readings of one ruler, and should never be plotted on one axis. On the Artificial Analysis Intelligence Index (v4.3.2, a third, independent composite; superseded Nov 2026, see below): Opus 5.5 at max effort scores **58** — GPT-6 Astra and Fable 5.1 tie at **53**, Opus 5 trails at **51** ([artificialanalysis.ai](https://artificialanalysis.ai/articles/claude-opus-5-5)). Three composite indices, three different scales, three different refit histories — read the fit date before you read the score.
 
 ### Benchmark names are not stable identifiers
 
 Two forms of the same trap showed up again in the Opus 5.5 card.
 
-**Same benchmark, renamed.** The Opus 5 card (July 2026) reports Opus 5 at 43.3% on "FrontierBench v0.1," described there as "a successor to Terminal-Bench 2.1 developed by the same team." The Opus 5.5 card (September) reports the same model, Opus 5, at 52.3% — under the name **Terminal-Bench 4.0**. Whether "FrontierBench v0.1" is an internal working name for what later shipped publicly as Terminal-Bench 4.0, or a distinct benchmark from the same team that was simply superseded, is not stated in either card, and it does not resolve from tbench.ai either: its Terminal-Bench 3.0 launch post (Aug 24, 2026, 74 tasks) never mentions "FrontierBench," and a direct check of tbench.ai's current site (which now hosts Terminal-Bench 4.0 live) found no page connecting the two names. Don't repeat "FrontierBench v0.1 = Terminal-Bench 3.0" as a confirmed fact — the honest version is "same model, two names, three months apart, lineage unconfirmed."
+**Same benchmark, renamed.** The Opus 5 card (July 2026) reports Opus 5 at 43.3% on "FrontierBench v0.1," described there as "a successor to Terminal-Bench 2.1 developed by the same team." The Opus 5.5 card (September) reports the same model, Opus 5, at 52.3% — under the name **Terminal-Bench 4.0**. Whether "FrontierBench v0.1" is an internal working name for what later shipped publicly as Terminal-Bench 4.0, or a distinct benchmark from the same team that was simply superseded, is not stated in either card, and it does not resolve from tbench.ai either: its Terminal-Bench 3.0 launch post (Aug 24, 2026, 74 tasks) never mentions "FrontierBench," and a direct check of tbench.ai's current site (which then hosted Terminal-Bench 4.0 live; superseded Nov 2026, see below) found no page connecting the two names. Don't repeat "FrontierBench v0.1 = Terminal-Bench 3.0" as a confirmed fact — the honest version is "same model, two names, three months apart, lineage unconfirmed."
 
 **Same benchmark, two harnesses, one version number.** Terminal-Bench 4.0 itself is not one number. Anthropic's own card reports Opus 5.5 at **66.4%** (xhigh effort, its standard eval configuration). Artificial Analysis, running the identically-versioned "Terminal-Bench 4.0" sub-eval inside its own harness, reports Opus 5.5 at **59.6%** — "level with the leader GPT-6 Astra" in AA's framing. Same version string, same model, a 6.8-point gap, because effort, scaffold, and grading are part of a benchmark's identity and the version number doesn't carry them. The same split shows up on Humanity's Last Exam: 64.4% no-tools (Anthropic's card, max effort) versus 61.4% (Artificial Analysis's own harness, "previous best 59.1%"). Treat a benchmark name plus a version number as a pointer to a *family* of measurements, not a single number, until you've pinned who ran it and at what effort — this is §16.5 questions 1–2, restated with a fresh pair of examples.
+
+**November 2026 update: three rulers changed again.** All three changes below were read from the owners' own pages on Nov 11, 2026.
+
+- **Terminal-Bench 4.1 (Nov 9, 2026).** tbench.ai lists it as "Updating task verifiers for reward hack resistance and correctness." The verifiers changed, so scores on 4.0 and 4.1 are not comparable ([tbench.ai news](https://www.tbench.ai/news)). The Artificial Analysis page still names Terminal-Bench 4.0 in its index.
+- **Artificial Analysis Intelligence Index is now v5.0.1, with 9 evaluations:** AA-Briefcase v1.1, AutomationBench-AA, GDP.pdf, FrontierCode-AA 2.0, Terminal-Bench 4.0, Terminal-Bench-Science 0.1, CritPt v2 (Hard), AA-Omniscience v1.1 and HLE-Diamond. It dropped GDPval-AA in v5.0. The page shows no dates, so the ship date of v5.0.1 is not established here ([methodology](https://artificialanalysis.ai/methodology/intelligence-benchmarking)). The v4.2 and v4.3 history above is now superseded.
+- **Epoch Capabilities Index moved to a Bayesian model (Nov 4, 2026).** Epoch says the new model gives the index uncertainty estimates ([Epoch benchmarks](https://epoch.ai/benchmarks), [methodology](https://epoch.ai/publications/eci-bayesian-methodology)). Treat ECI values from before and after the change as two different fits, like the AECI refit above, until Epoch states otherwise.
+
+Record benchmark version, harness and index version next to every score you store.
 
 ### Independent numbers lag release (Opus 5.5, as of September 23)
 
@@ -20935,12 +21468,15 @@ Primary references for the changing API claims: [Claude model overview](https://
 
 | Model | ID | Context | Max output | Input / Output per MTok | Where it belongs in an eval stack |
 |---|---|---|---|---|---|
+| Claude Fable 5.2 | `claude-fable-5-2` | 1M | 128K | $8 / $40 (cache read $0.20) | Ceiling-setting; cheaper than Fable 5.1 (released Nov 9, 2026; [what's new](https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2)) |
 | Claude Fable 5.1 | `claude-fable-5-1` | 1M | 128K | $10 / $50 (cache read $0.25) | Ceiling-setting; cheaper to replay long transcripts than Fable 5 because of the 0.025× cache-read rate ([pricing](https://platform.claude.com/docs/en/about-claude/pricing)) |
 | Claude Fable 5 | `claude-fable-5` | 1M | 128K | $10 / $50 | Ceiling-setting: hardest reference judgments, adversarial verification (legacy tier, still active) |
 | **Claude Opus 5.5** | **`claude-opus-5-5`** | **1M** | **128K** | **$4 / $20 (cache read $0.20)** | **Anthropic's recommended default since Sept 22; adopting it as your judge is a measurement change — re-run judge calibration first (§15.4)** |
 | Claude Opus 5 | `claude-opus-5` | 1M | 128K | $5 / $25 | A/B baseline; last Opus that can disable thinking (≤ `high`) (listed as legacy, still Active) |
 | Claude Opus 4.8 | `claude-opus-4-8` | 1M | 128K | $5 / $25 | Fallback target on refusals; A/B baseline |
+| Claude Sonnet 5.5 | `claude-sonnet-5-5` | 1M | 128K | $2 / $10 (cache read $0.10) | High-volume judging; re-calibrate before switching from Sonnet 5 (released Sept 28, 2026; [overview](https://platform.claude.com/docs/en/models/sonnet-5-5/overview)) |
 | Claude Sonnet 5 | `claude-sonnet-5` | 1M | 128K | $2 / $10 | High-volume judging where κ against humans holds up |
+| Claude Haiku 5.5 | `claude-haiku-5-5` | 1M | 128K | $0.10 / $0.50 up to 100,000 prompt tokens; $0.50 / $2.50 above (cache read $0.01 / $0.05) | First-stage screen at a tenth of Haiku 4.5's price; see Module 05 section 5.6c.7 (released Oct 7, 2026; [overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview)) |
 | Claude Haiku 4.5 | `claude-haiku-4-5` | 200K | 64K | $1 / $5 | First-stage screen in a cascade; deterministic-ish rule checks |
 
 Facts that change harness design, not just the model string:
@@ -20993,11 +21529,25 @@ resp = client.messages.create(
 )
 ```
 
+### What changes on Sonnet 5.5, Haiku 5.5 and Fable 5.2 (Sept 28 – Nov 9, 2026)
+
+Nov 11, 2026 update. Sources: the [Claude Platform release notes](https://platform.claude.com/docs/en/release-notes/overview), the [Sonnet 5.5 overview](https://platform.claude.com/docs/en/models/sonnet-5-5/overview), the [Haiku 5.5 overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview), the [Fable 5.2 what's new page](https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2) and the [refusals page](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback).
+
+- **Sonnet 5.5 rejects `thinking: disabled`.** To turn off up-front thinking, send `thinking: {"type": "between_tools"}` at `high` effort or below. `"disabled"` is rejected. Forced `tool_choice` (`any` or `tool`) and `temperature`, `top_p`, `top_k` also return 400. *Why a harness cares:* a thinking-off ablation or a forced-tool judge written for Sonnet 5 fails on its first request. Re-run judge calibration (§15.4) after you change it.
+- **Haiku 5.5 price depends on prompt length.** Prompts up to 100,000 tokens cost $0.10 / $0.50 per MTok. Longer prompts cost $0.50 / $2.50. Its tokenizer produces about 30% more tokens than Haiku 4.5 for the same text. *Why a harness cares:* a flat per-token cost model is wrong for long-context evals. And the same text is about 30% more tokens, so for identical text the effective price is nearer 0.13× Haiku 4.5's than 0.10× (our arithmetic: 0.10 × 1.3).
+- **Haiku 5.5 thinks by default, at `medium` effort.** Thinking is adaptive and on by default, and it is the first Haiku with effort levels. `budget_tokens`, sampling parameters and assistant prefill can each return 400. Thinking tokens bill as output tokens. *Why a harness cares:* a Haiku screen that ran without thinking now spends output tokens on thinking, and a prefill-based parser breaks. Set effort on purpose and check `max_tokens` (§15.3).
+- **Fable 5.2 checks thinking-block prefixes on every account.** If you edit `system`, `tools` or earlier messages and resend a 5.2 thinking block, the request returns 400 unless you set the beta header `thinking-binding-controls-2026-08-01` with `prefix_mismatch_behavior: "drop_block"`. The old account-age limit no longer applies. *Why a harness cares:* a harness that edits history between turns, or replays stored transcripts with edits, now gets a 400 (§15.6).
+- **Only Fable 5.2 and Mythos 5.2 read 5.2 thinking blocks.** Any other model, including a fallback model, drops them silently. *Why a harness cares:* a cross-model replay or a fallback run sees a transcript without the reasoning, so the two runs are not the same test.
+- **Refusals can cost money.** Since Sept 24, 2026, a refusal that arrives before any output is billed when its category is `bio`, `frontier_llm` or `reasoning_extraction`. Sonnet 5.5 and Haiku 5.5 also carry safety classifiers that can decline. *Why a harness cares:* eval prompts about model training or reasoning dumps can fail and still bill. Log refusals with their category (§15.4).
+- **API version 2026-10-21 removes sampling parameters on every model.** It shipped on Oct 21, 2026 with new SDK majors (Python 2.0.0, TypeScript 1.0.0, Go 2.0.0, Java 3.0.0, Ruby 2.0.0). On this version `temperature`, `top_p` and `top_k` return 400 on every model. *Why a harness cares:* a pinned-sampling harness breaks on upgrade, and the SDK majors carry breaking changes of their own. Pin the SDK and the API version together.
+
 ---
 
 ## 15.2 Why One Run Is Not Evidence
 
 For years, the first line of every eval harness was `temperature=0`, and the second was a comment claiming this made runs reproducible. Both are now gone: **`temperature`, `top_p`, and `top_k` are rejected with a 400** on Opus 5, Opus 4.8/4.7, Fable 5, and (for non-default values) Sonnet 5.
+
+Nov 11, 2026 update: Sonnet 5.5, Haiku 5.5 and Fable 5.2 reject the three parameters too, and on API version 2026-10-21 they are rejected on every model ([release notes](https://platform.claude.com/docs/en/release-notes/overview)).
 
 This is less of a loss than it looks, because `temperature=0` never guaranteed
 identical outputs; it reduced variance without eliminating it. It did not make
@@ -21339,6 +21889,8 @@ Four independent multipliers, all composable. For 10,000 judge calls at 2,000 in
 | Haiku 4.5 screen only | $35.00 | 20% |
 | Cascade (Haiku → Opus 5 on 20%) | $70.00 | 40% |
 | **Cascade + caching + batch** | **$21.50** | **12%** |
+
+**Nov 2026 update (as of Nov 11, 2026):** Haiku 5.5 at $0.10 / $0.50 per MTok changes this table. The re-priced version (naive Opus 5.5 $140.00; cascade + caching + batch $9.38) and its caveats are in [Module 05 section 5.6c.7](../05-scaling/README.md).
 
 **1. Prompt caching, with the prefix designed for it.** Caching is a *prefix match* — one changed byte invalidates everything after it. For a judge, that means: rubric and instructions first (stable, cached), the case under evaluation last (varies every call).
 

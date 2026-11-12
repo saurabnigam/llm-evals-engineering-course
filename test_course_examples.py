@@ -560,5 +560,92 @@ class EffortSweepExampleTests(unittest.TestCase):
         self.assertEqual(report["pass_rate"], 1.0)
 
 
+class ScalablePlatformExampleTests(unittest.TestCase):
+    README = ROOT / "05-scaling" / "README.md"
+    NAMESPACE = {"hashlib": __import__("hashlib"), "math": __import__("math")}
+
+    def test_cell_id_ignores_key_order_and_excludes_the_grader(self):
+        (cell_id,) = load_symbols(self.README, "cell_id", namespace=self.NAMESPACE)
+
+        first = cell_id("t1", "v3", {"model": "m", "effort": "low"}, 0)
+        reordered = cell_id("t1", "v3", {"effort": "low", "model": "m"}, 0)
+
+        self.assertEqual(first, reordered)
+        self.assertNotEqual(first, cell_id("t1", "v3", {"model": "m", "effort": "low"}, 1))
+        self.assertNotEqual(first, cell_id("t1", "v4", {"model": "m", "effort": "low"}, 0))
+        self.assertNotEqual(first, cell_id("t1", "v3", {"model": "m", "effort": "high"}, 0))
+
+    def test_plan_reuses_scorable_cells_and_retries_infra_errors(self):
+        cell_id, plan_cells = load_symbols(
+            self.README, "cell_id", "plan_cells", namespace=self.NAMESPACE
+        )
+        tasks = [{"id": "t1", "version": "v1"}, {"id": "t2", "version": "v1"}]
+        variant = {"model": "m", "effort": "low"}
+        ledger = {
+            cell_id("t1", "v1", variant, 0): "completed",
+            cell_id("t1", "v1", variant, 1): "infra_error",
+            cell_id("t2", "v1", variant, 0): "refused",
+        }
+
+        plan = plan_cells(tasks, [variant], 2, ledger)
+
+        self.assertEqual(plan["planned"], 4)
+        self.assertEqual(plan["reused"], 2)
+        self.assertEqual(
+            sorted((cell["task_id"], cell["rep"]) for cell in plan["todo"]),
+            [("t1", 1), ("t2", 1)],
+        )
+
+    def test_plan_rejects_zero_reps_and_duplicate_variants(self):
+        _, plan_cells = load_symbols(
+            self.README, "cell_id", "plan_cells", namespace=self.NAMESPACE
+        )
+        tasks = [{"id": "t1", "version": "v1"}]
+
+        with self.assertRaises(ValueError):
+            plan_cells(tasks, [{"model": "m"}], 0, {})
+        with self.assertRaises(ValueError):
+            plan_cells(tasks, [{"model": "m"}, {"model": "m"}], 1, {})
+
+    def test_paired_difference_reports_interval_and_unpaired_tasks(self):
+        (paired_difference,) = load_symbols(
+            self.README, "paired_difference", namespace=self.NAMESPACE
+        )
+        scores_a = {"t1": 1.0, "t2": 1.0, "t3": 0.0, "t4": 1.0, "only_a": 1.0}
+        scores_b = {"t1": 1.0, "t2": 0.0, "t3": 0.0, "t4": 0.0}
+
+        report = paired_difference(scores_a, scores_b)
+
+        self.assertEqual(report["n_tasks"], 4)
+        self.assertEqual(report["unpaired_tasks"], 1)
+        self.assertAlmostEqual(report["mean_diff"], 0.5)
+        self.assertAlmostEqual(report["se"], (1 / 12) ** 0.5)
+        self.assertLess(report["ci95"][0], 0)
+        self.assertEqual(report["decision"], "no detectable difference")
+
+    def test_clustered_errors_are_wider_when_a_cluster_moves_together(self):
+        (paired_difference,) = load_symbols(
+            self.README, "paired_difference", namespace=self.NAMESPACE
+        )
+        scores_a = {"t1": 1.0, "t2": 1.0, "t3": 0.0, "t4": 1.0}
+        scores_b = {"t1": 1.0, "t2": 0.0, "t3": 0.0, "t4": 0.0}
+        clusters = {"t1": "doc1", "t3": "doc1", "t2": "doc2", "t4": "doc2"}
+
+        independent = paired_difference(scores_a, scores_b)
+        clustered = paired_difference(scores_a, scores_b, clusters)
+
+        self.assertEqual(clustered["n_clusters"], 2)
+        self.assertAlmostEqual(clustered["se"], 0.5)
+        self.assertGreater(clustered["se"], independent["se"])
+
+    def test_paired_difference_needs_two_clusters(self):
+        (paired_difference,) = load_symbols(
+            self.README, "paired_difference", namespace=self.NAMESPACE
+        )
+
+        with self.assertRaises(ValueError):
+            paired_difference({"t1": 1.0}, {"t1": 0.0})
+
+
 if __name__ == "__main__":
     unittest.main()

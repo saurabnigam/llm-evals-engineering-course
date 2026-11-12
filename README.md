@@ -9,7 +9,9 @@
 > eval-science on chain-of-thought monitorability and judge reliability —
 > with current API behavior, recent model reports, and evaluation practice
 > from primary research and evaluation groups. Refreshed again on
-> **September 23, 2026** for the Claude Opus 5.5 release.
+> **September 23, 2026** for the Claude Opus 5.5 release, and on
+> **November 11, 2026** with a platform-level treatment of running evals at
+> scale and the Sonnet 5.5 / Haiku 5.5 / Fable 5.2 release wave.
 >
 > **Companion reading:** Hamel Husain's ["Your AI Product Needs Evals"](https://hamel.dev/blog/posts/evals/) and Eugene Yan's ["Evaluating LLM-Evaluators"](https://eugeneyan.com/writing/llm-evaluators/) are useful practitioner introductions to read alongside this guide.
 
@@ -22,7 +24,7 @@
 | [02-evaluation-methods](./02-evaluation-methods/) | Core Evaluation Approaches + Psychometric & Dynamic Evals | 4 hours | Intermediate |
 | [03-pipeline-architecture](./03-pipeline-architecture/) | Building Robust Pipelines | 3 hours | Intermediate |
 | [04-cold-start](./04-cold-start/) | Bootstrapping Evaluations | 2 hours | Advanced |
-| [05-scaling](./05-scaling/) | Cost & Performance Optimization | 3 hours | Advanced |
+| [05-scaling](./05-scaling/) | Cost & Performance Optimization + Evals as a Platform | 4 hours | Advanced |
 | [06-feedback-loops](./06-feedback-loops/) | Continuous Improvement | 3 hours | Advanced |
 | [07-cicd-integration](./07-cicd-integration/) | Production Integration | 4 hours | Expert |
 | [08-case-studies](./08-case-studies/) | Worked Composites + Sourced Case Studies | 2 hours | Intermediate |
@@ -35,7 +37,7 @@
 | **[15-opus5-eval-techniques](./15-opus5-eval-techniques/)** | **Evaluating in the Opus 5 Era: API-Native Eval Techniques** | **2 hours** | **Advanced** |
 | **[16-frontier-architectures-and-research-thinking](./16-frontier-architectures-and-research-thinking/)** | **Reading the Frontier: DeepSeek-V4, Kimi K3, GPT-5.6 — and How to Think Like a Researcher** | **2 hours** | **All levels** |
 
-**Total Study Time: ~48 hours**
+**Total Study Time: ~49 hours**
 
 ---
 
@@ -70,6 +72,7 @@ state the next discriminating check when attribution needs more evidence.
 | Contamination, private/post-cutoff holdouts, dynamic evals, memory leakage | [12](./12-eval-training-separation/), [15](./15-opus5-eval-techniques/) |
 | Retry/verifier value, marginal yield, regressions, loop cost | [14](./14-loop-engineering/) |
 | Current effort, refusal, structured-output, caching, batch, migration behavior | [15](./15-opus5-eval-techniques/) |
+| Running evals as a shared platform: idempotent work units, quota-aware scheduling, batch and sandbox lanes, paired statistics, multi-tenancy | [05 §5.6c](./05-scaling/) |
 | Multimodal generation without one reference answer | [08 Case 10](./08-case-studies/#case-study-10-uber-eats-multimodal-image-agent--evaluating-generation-with-no-ground-truth) |
 | Architecture/vendor claims, reproductions, containment, research inference | [13](./13-advancing-ai-research/), [16](./16-frontier-architectures-and-research-thinking/) |
 
@@ -80,6 +83,20 @@ fit the existing chapters, so adding another chapter would duplicate material
 rather than close a learner gap.
 
 ---
+
+## What's New — November 11, 2026 update (evals at scale; Sonnet 5.5, Haiku 5.5, Fable 5.2)
+
+This is a delta on top of the September editions below. It has one new
+section and one currency sweep.
+
+- **[Module 05 §5.6c](./05-scaling/) (new: Evals as a Platform)**: the scalable design, for teams that have outgrown a worker pool. It covers the three limits that appear at scale (provider quota, statistical signal, trust between teams); a content-addressed unit of work with a ledger, so re-runs, resumes and re-grades stop paying twice; scheduling against tokens per minute instead of queue depth, with the arithmetic showing that prompt caching buys throughput as well as money; batch, sandbox and online lanes; Anthropic's measurement of how container resource limits move agent scores; paired differences, clustered errors and sample-size planning from Miller's "Adding Error Bars to Evals"; multi-tenancy and cost attribution; and a build-or-adopt table (script, Inspect eval sets, or a Hawk-style platform). Three new code examples carry six new tests.
+- **[Module 05 §5.6c.7](./05-scaling/) & [Module 15](./15-opus5-eval-techniques/) (economics)**: Claude Haiku 5.5 at $0.10 / $0.50 per MTok makes the screening tier 2.5% of the arbiter's cost, down from 20%. The re-priced cascade table (naive Opus 5.5 $140.00 → cascade + caching + batch $9.38 for 10,000 judge calls) shows that the escalation rate, not the screen, is now the lever. Four caveats come with it: thinking on by default, a tokenizer that counts about 30% more tokens, a price step above 100,000 prompt tokens, and billed refusals.
+- **[Module 15](./15-opus5-eval-techniques/) (API changes)**: Sonnet 5.5 (Sept 28), Haiku 5.5 (Oct 7) and Fable 5.2 (Nov 9) added to the model table, with the changes that break a harness: Sonnet 5.5 rejects `thinking: disabled`; Fable 5.2 applies the thinking-block history check to every account; API version `2026-10-21` rejects sampling parameters on every model.
+- **[Module 03](./03-pipeline-architecture/) (tooling, now dated November 2026)**: Inspect's adaptive connection limits and early-stopping hook; judge defaults that changed under their users (LangSmith, `verifiers`), which is why the judge model must be pinned; Harbor's failure classification; the Langfuse Nov 16 cutover; the OpenAI Evals shutdown on Nov 30; METR's Hawk and UK AISI's Transect as new rows; and the OpenTelemetry GenAI conventions' status (still Development, moved to their own repository).
+- **[Module 12](./12-eval-training-separation/) (rulers that changed)**: Terminal-Bench 4.1 changed its verifiers, the Artificial Analysis index is at v5.0.1, and the Epoch Capabilities Index moved to a Bayesian model.
+- **[Module 02](./02-evaluation-methods/) (judge and agent findings)**: Arena's measurement of judge self-preference, strict success versus goal attainment for agents (BizAgentBench), and scoring agent behaviour alongside team outcomes.
+
+**Not covered in this update:** the Sonnet 5.5, Haiku 5.5 and Fable 5.2 system cards were not read (Case Studies in Module 08 and the alignment material in Modules 10, 11 and 13 are unchanged), and Modules 00, 01, 04, 06–11, 13, 14 and 16 received no content review beyond two one-line status corrections (in Modules 06 and 09).
 
 ## What's New — September 23, 2026 update (Claude Opus 5.5)
 
@@ -308,12 +325,12 @@ This guide uses:
 
 | Category | Tools |
 |----------|-------|
-| **Eval frameworks** | [Inspect AI](https://inspect.aisi.org.uk/) (UK AISI — agent-first, sandboxed, 200+ benchmarks), [OpenAI Evals](https://github.com/openai/evals) (hosted platform [sunsetting](https://developers.openai.com/api/docs/deprecations): read-only Oct 31, 2026, shut down Nov 30, 2026 — OpenAI points early-stage users to Datasets, durable path is Promptfoo), [Promptfoo](https://www.promptfoo.dev/), [DeepEval](https://github.com/confident-ai/deepeval), [Google Agent + Model Evaluations](https://developers.googleblog.com/agent-and-model-evaluations-in-gemini-enterprise-agent-platform-are-now-ga/) (GA Jul 31, 2026 — Gemini Enterprise Agent Platform), Claude Code [`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) (Sept 2026 — proposes cases/graders, runs each 3x with and 3x without the plugin) |
+| **Eval frameworks** | [Inspect AI](https://inspect.aisi.org.uk/) (UK AISI — agent-first, sandboxed, 200+ benchmarks), [OpenAI Evals](https://github.com/openai/evals) (hosted platform [sunsetting](https://developers.openai.com/api/docs/deprecations): read-only since Oct 31, 2026, shutdown scheduled for Nov 30, 2026 — OpenAI points early-stage users to Datasets, durable path is Promptfoo), [Promptfoo](https://www.promptfoo.dev/), [DeepEval](https://github.com/confident-ai/deepeval), [Google Agent + Model Evaluations](https://developers.googleblog.com/agent-and-model-evaluations-in-gemini-enterprise-agent-platform-are-now-ga/) (GA Jul 31, 2026 — Gemini Enterprise Agent Platform), Claude Code [`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) (Sept 2026 — proposes cases/graders, runs each 3x with and 3x without the plugin) |
 | **Hosted eval + tracing** | [LangSmith](https://docs.langchain.com/langsmith/evaluation), [Braintrust](https://www.braintrust.dev/), [Arize Phoenix](https://phoenix.arize.com/) (evals 3.6.0, Aug 28 2026, adds a session-level PII evaluator), [Weights & Biases Weave](https://wandb.ai/site/weave), [Langfuse](https://langfuse.com/) ([stable evaluator API](https://langfuse.com/changelog/2026-08-27-stable-evaluator-api), Aug 2026 — old endpoints migrate by Nov 16, 2026), [Helicone](https://www.helicone.ai/) |
 | **RAG-specific** | [RAGAS](https://docs.ragas.io/), [TruLens](https://www.trulens.org/), [DeepEval RAG metrics](https://github.com/confident-ai/deepeval) |
-| **Tracing standards** | [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), [OpenLLMetry / Traceloop](https://github.com/traceloop/openllmetry) |
+| **Tracing standards** | [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) (still Development status as of Nov 2026; now in [their own repository](https://github.com/open-telemetry/semantic-conventions-genai)), [OpenLLMetry / Traceloop](https://github.com/traceloop/openllmetry) |
 | **Safety / red-team** | [Inspect Evals safety suite](https://inspect.aisi.org.uk/evals/), [Garak](https://github.com/NVIDIA/garak), [PyRIT](https://github.com/Azure/PyRIT), Anthropic's [SHADE-Arena](https://alignment.anthropic.com/2025/strengthening-red-teams/) |
-| **Public leaderboards** | [Arena (formerly LMArena/LMSYS)](https://lmarena.ai/) — note "The Leaderboard Illusion" critique; [Epoch AI Benchmarking Hub + Capabilities Index (ECI)](https://epoch.ai/benchmarks/eci); [Artificial Analysis Intelligence Index](https://artificialanalysis.ai/methodology/intelligence-benchmarking) (recomposed twice in Sept 2026 — v4.2 then v4.3 — after AA and Epoch's ECI ranked GPT-6 Astra very differently; see [Module 12](./12-eval-training-separation/)); [SEAL / SEAL Showdown (Scale)](https://scale.com/leaderboard); [Terminal-Bench 3.0](https://www.tbench.ai/news/terminal-bench-3-0) (Aug 24, 2026 — replaces the saturated 2.1 suite), [LiveBench](https://livebench.ai/), [SWE-bench Verified/Pro](https://www.swebench.com/), [ARC-AGI-3 leaderboard](https://arcprize.org/leaderboard), [FrontierMath Erdős](https://epoch.ai/latest/announcing-frontiermath-erdos), [Agents' Last Exam](https://agents-last-exam.org/) |
+| **Public leaderboards** | [Arena (formerly LMArena/LMSYS)](https://arena.ai/) — note "The Leaderboard Illusion" critique; [Epoch AI Benchmarking Hub + Capabilities Index (ECI)](https://epoch.ai/benchmarks/eci); [Artificial Analysis Intelligence Index](https://artificialanalysis.ai/methodology/intelligence-benchmarking) (v5.0.1 as of Nov 11, 2026; recomposed twice in Sept 2026 — v4.2 then v4.3 — after AA and Epoch's ECI ranked GPT-6 Astra very differently; see [Module 12](./12-eval-training-separation/)); [SEAL / SEAL Showdown (Scale)](https://scale.com/leaderboard); [Terminal-Bench 3.0](https://www.tbench.ai/news/terminal-bench-3-0) (Aug 24, 2026 — replaces the saturated 2.1 suite), [LiveBench](https://livebench.ai/), [SWE-bench Verified/Pro](https://www.swebench.com/), [ARC-AGI-3 leaderboard](https://arcprize.org/leaderboard), [FrontierMath Erdős](https://epoch.ai/latest/announcing-frontiermath-erdos), [Agents' Last Exam](https://agents-last-exam.org/) |
 
 ---
 

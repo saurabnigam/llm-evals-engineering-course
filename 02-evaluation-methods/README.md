@@ -869,7 +869,7 @@ The mirror failure is just as expensive. Suppose prompt-iteration gets TPR to 90
 
 #### Three 2026 findings that change how you validate a judge
 
-The TPR/TNR loop above assumes the judge's verdict tracks the *response*. Three papers from this quarter say that assumption needs its own test:
+The TPR/TNR loop above assumes the judge's verdict tracks the *response*. Three papers from this quarter say that assumption needs its own test. A fourth finding, added in November 2026, follows them:
 
 1. **Rubric-artifact leakage.** A classifier trained on the rubric text alone — never shown the response being graded — predicts the judge's verdict at non-trivial accuracy ([arXiv 2609.02942](https://arxiv.org/html/2609.02942), Sept 2026). Some of what looks like judge "signal" is just rubric wording correlating with your label distribution, not the response being graded. Add a **rubric-only baseline** to every judge validation: if a response-blind model beats the majority-class rate by much, the rubric is leaking, not the judge grading.
 
@@ -889,6 +889,7 @@ if leak_acc > majority_rate + 0.05:
 
 2. **Reliability ≠ validity.** Judge meta-evaluations over-weight raw human agreement as the headline metric ([arXiv 2606.19544](https://arxiv.org/html/2606.19544v1)). A judge can be highly self-consistent (good κ, good TPR/TNR) and still be biased in ways the rubric wording predicts (finding 1 above) — agreement and validity are different claims. Where the provider exposes logprobs, report judge **calibration** — ECE or Brier score — as a second axis alongside TPR/TNR/κ, not a replacement for them.
 3. **Self-consistency is not the same claim as human agreement.** A study of two small open judges — LLaMA-3-8B and Qwen2.5-7B — found near-perfect exact self-consistency (97.3% and 92.3%: the judge gave the same verdict on a repeat call almost every time) but only weak correlation with human ratings (r = 0.275 and r = 0.340) ([arXiv 2609.13824](https://arxiv.org/abs/2609.13824), "When Consistency Does Not Mean Reliability," Sept 2026). A judge that agrees with itself is not evidence that it agrees with a human — self-consistency and TPR/TNR-against-humans are two different measurements, and only the second one calibrates the judge. Run both, and don't let a high self-consistency number substitute for step 3 of the loop above.
+4. **Judges prefer their own answers (Nov 2026 addition).** Arena's "Self-Preference of AI Judges" (Sept 30, 2026) reports: "LLM judges prefer their own responses 70% more often than humans do." ([arena.ai/blog](https://arena.ai/blog)). Consequence: when the comparison is close, do not grade a model with a judge from the same family. Use a judge from another family, or a small jury.
 
 ---
 
@@ -1541,6 +1542,11 @@ Three practice rules from the same playbook:
 2. **Grader hierarchy:** deterministic/code graders where possible → LLM graders where necessary → humans judiciously (calibration and gold standards).
 3. **Read the transcripts. Manual review is non-negotiable.** An internal Anthropic run scored Opus 4.5 at 42% on a benchmark until *harness* bugs were fixed — then 95%, same model. If you never read trajectories, you can't tell a model failure from an eval failure.
 
+**Nov 2026 additions on scoring agents:**
+
+- **Outcome scores can hide invalid runs (Oct 14, 2026).** BizAgentBench ([arXiv 2610.20424](https://arxiv.org/abs/2610.20424)) finds that "outcome-based evaluation can mask invalid execution." One model scored 42.0% goal attainment but 32.7% strict success. Report constraint-respecting success beside goal success.
+- **Measure behavior and group outcomes together (Nov 11, 2026).** Anthropic's "Worse Together" ([post](https://alignment.anthropic.com/2026/worse-together/)) says "evaluations should measure agent behavior alongside group outcomes, since each misses something on its own." It studies multi-user, multi-agent teams. If your agents work in a team, score the individual agent's behavior and the team's result.
+
 **Reliability: pass@k vs pass^k.** Leaderboards report pass@k (≥1 success in k trials). Deployed agents need **pass^k** (*all* k trials succeed) — introduced by tau-bench, which found GPT-4o pass^8 < 25% in retail ([arXiv 2406.12045](https://arxiv.org/abs/2406.12045)):
 
 ```python
@@ -1612,7 +1618,7 @@ Reasoning models perform additional internal computation before the final answer
 | Fast prompt A/B in YAML; red-team probes | [Promptfoo](https://www.promptfoo.dev/) (acquisition by OpenAI announced Mar 2026; remains open source — [announcement](https://openai.com/index/openai-to-acquire-promptfoo/)) |
 | Reference framework, model registry | [OpenAI Evals](https://github.com/openai/evals) |
 | Adversarial / red-team probes | [Garak](https://github.com/NVIDIA/garak), [PyRIT](https://github.com/Azure/PyRIT) |
-| Tracing standard | [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), [OpenLLMetry](https://github.com/traceloop/openllmetry) |
+| Tracing standard | [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) (as of Nov 11, 2026: still Development status, moved to [semantic-conventions-genai](https://github.com/open-telemetry/semantic-conventions-genai); treat attribute names as unstable), [OpenLLMetry](https://github.com/traceloop/openllmetry) |
 
 ### 2.7.8 Worked Examples
 
